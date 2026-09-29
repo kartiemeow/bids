@@ -1,0 +1,15 @@
+# Конфигурация для Render (render.com). Позволяет задеплоить игру в один
+# клик: "New" -> "Blueprint" -> указать этот репозиторий.
+#
+# Почему не Vercel: игра держит постоянные WebSocket-соединения, а комнаты
+# живут в памяти процесса. Функции Vercel stateless и долгоживущие соединения
+# не поддерживают, поэтому комната рассыпалась бы между вызовами.
+services:
+  - type: web
+    name: lotsgame
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true

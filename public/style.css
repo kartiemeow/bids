@@ -1,0 +1,528 @@
+/* Hallmark · genre: atmospheric · macrostructure: Workbench · theme: Lumen (drop 01 · night foundry) · designed-as-app
+   Редизайн: тёмный приборный интерфейс аукциона.
+   Отброшено: пурпурно-мятные радиальные блобы, градиентный текст, backdrop-filter,
+   два конкурирующих акцента, тотальное центрирование. */
+
+:root {
+  /* Палитра — OKLCH, якорь 265 (холодная фиалка), акцент расплавленная латунь. */
+  --color-paper:      oklch(13% 0.014 265);
+  --color-paper-2:    oklch(17% 0.016 265);
+  --color-paper-3:    oklch(21% 0.018 265);
+  --color-rule:       oklch(30% 0.014 265);
+  --color-rule-2:     oklch(40% 0.014 265);
+  --color-neutral:    oklch(58% 0.012 265);
+  --color-muted:      oklch(74% 0.010 265);
+  --color-ink:        oklch(96% 0.006 262);
+  --color-ink-2:      oklch(86% 0.008 40);
+  --color-accent:     oklch(76% 0.17 50);
+  --color-accent-2:   oklch(68% 0.16 18);
+  --color-accent-ink: oklch(17% 0.02 50);
+  --color-focus:      oklch(70% 0.19 55);
+  --color-glow:       oklch(80% 0.16 50 / 0.42);
+  --color-paper-emit: oklch(76% 0.17 50 / 0.05);
+  --rule-blueprint:   oklch(96% 0.006 262 / 0.04);
+
+  --font-display: "Literata", "Tiempos Headline", Georgia, serif;
+  --font-body:    "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-label:   "JetBrains Mono", ui-monospace, monospace;
+
+  --space-3xs: 0.25rem; --space-2xs: 0.5rem;  --space-xs: 0.75rem;
+  --space-sm:  1rem;     --space-md:  1.5rem; --space-lg:  2rem;
+  --space-xl:  3rem;
+
+  --text-xs: 0.75rem;   --text-sm: 0.875rem; --text-md: 1.0625rem;
+  --text-lg: 1.375rem;  --text-xl: 1.75rem;  --text-2xl: 2.25rem;
+  --text-display: clamp(2.25rem, 9vw, 3.25rem);
+
+  --ease-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-short: 220ms;
+  --dur-pulse: 4s;
+
+  --radius-card: 10px;
+  --radius-input: 8px;
+  --radius-pill: 999px;
+
+  --gutter: 1.25rem;
+  --z-toast: 60;
+}
+
+/* ── Основа ──────────────────────────────────────────────────────────── */
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html {
+  background: var(--color-paper);
+  overflow-x: clip; /* правило 320px: никакого горизонтального скролла */
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  color: var(--color-ink-2);
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  font-weight: 400;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+
+  /* Чертёжная сетка вместо блобов: холст выглядит инженерным, а не «вibe». */
+  background:
+    linear-gradient(var(--rule-blueprint) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(90deg, var(--rule-blueprint) 1px, transparent 1px) 0 0 / 48px 48px,
+    radial-gradient(70% 40% at 50% 0%, var(--color-paper-emit) 0%, transparent 70%),
+    var(--color-paper);
+  background-attachment: fixed;
+}
+
+#app {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: calc(var(--space-md) + env(safe-area-inset-top)) var(--gutter)
+           calc(var(--space-xl) + env(safe-area-inset-bottom));
+}
+
+.screen { display: none; }
+.screen.active { display: block; animation: rise var(--dur-short) var(--ease-soft) both; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Два регистра: проза строчными, приборные подписи ПРОПИСНЫМИ ──────── */
+
+.brand, .lede, .sub, .btn, .hint, .field, .lot-name, .winner,
+.money, .value-sub, .rules span, .ok, .err { text-transform: lowercase; }
+
+.mono {
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Вход ────────────────────────────────────────────────────────────── */
+
+.auth__label { margin: 0 0 var(--space-lg); }
+
+.brand {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--text-display);
+  line-height: 1.02;
+  letter-spacing: -0.032em;
+  color: var(--color-ink);
+  margin: 0 0 var(--space-sm);
+  max-width: 14ch;
+}
+
+.lede {
+  margin: 0 0 var(--space-lg);
+  max-width: 34ch;
+  color: var(--color-ink-2);
+}
+.lede em {
+  font-style: normal;
+  color: var(--color-accent-2);
+  position: relative;
+  white-space: nowrap;
+}
+.lede em::after {
+  content: "";
+  position: absolute;
+  left: 0.05em; right: 0.05em; bottom: 0.06em;
+  height: 1px;
+  background: var(--color-accent-2);
+  transform-origin: left;
+  animation: draw 320ms var(--ease-soft) 700ms backwards;
+}
+@keyframes draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* ── Поля ────────────────────────────────────────────────────────────── */
+
+.field {
+  display: block;
+  width: 100%;
+  padding: 0.85rem 0.9rem;
+  margin-bottom: var(--space-2xs);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-input);
+  font-family: var(--font-body);
+  font-size: 16px; /* меньше 16px iOS зумит поле при фокусе */
+  outline: none;
+  transition: border-color var(--dur-short) var(--ease-soft);
+}
+.field::placeholder { color: var(--color-neutral); }
+.field:focus-visible,
+.field:focus { border-color: var(--color-accent); }
+
+.row { display: flex; gap: var(--space-2xs); }
+.row .field { min-width: 0; }
+.row .btn { flex: 0 0 auto; }
+#f-code { text-transform: uppercase; letter-spacing: 0.3em; font-family: var(--font-label); }
+
+/* ── Кнопки ──────────────────────────────────────────────────────────── */
+
+.btn {
+  padding: 0.85rem 1.1rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.2;
+  white-space: nowrap; /* подпись не должна переноситься на две строки */
+  cursor: pointer;
+  transition: background-color var(--dur-short) var(--ease-soft),
+              color var(--dur-short) var(--ease-soft);
+}
+.btn:active { background: oklch(68% 0.17 50); }
+.btn:disabled { opacity: 0.38; cursor: not-allowed; }
+
+.btn.ghost {
+  background: transparent;
+  color: var(--color-muted);
+  border-color: var(--color-rule);
+}
+.btn.ghost:active { background: var(--color-paper-2); color: var(--color-ink); }
+/* Включённое состояние — кнопка «я готов» при нажатии */
+.btn.on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-paper);
+}
+
+.btn.wide { width: 100%; margin-bottom: var(--space-2xs); }
+
+.quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2xs); margin-bottom: var(--space-2xs); }
+.btn.chip {
+  padding: 0.7rem 0;
+  border-radius: var(--radius-input);
+  background: var(--color-paper-2);
+  border-color: var(--color-rule);
+  color: var(--color-ink);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 500;
+}
+.btn.chip:active { border-color: var(--color-accent); color: var(--color-accent); }
+
+:where(a, button, input):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.err { color: var(--color-accent-2); font-size: var(--text-sm); min-height: 1.25rem; margin: var(--space-2xs) 0 0; text-align: left; }
+.ok  { color: var(--color-accent); font-size: var(--text-sm); margin: var(--space-2xs) 0; text-align: left; }
+
+/* ── Приборная карточка ──────────────────────────────────────────────── */
+
+.card {
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  background-image: radial-gradient(120% 100% at 50% 0%, var(--color-paper-emit) 0%, transparent 70%);
+}
+
+/* ── Лобби ───────────────────────────────────────────────────────────── */
+
+.bar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.code {
+  display: block;
+  font-family: var(--font-label);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: var(--color-accent);
+}
+
+.hint { color: var(--color-muted); font-size: var(--text-sm); margin: var(--space-2xs) 0 var(--space-md); max-width: 40ch; }
+.center { text-align: center; }
+.dim { color: var(--color-muted); }
+
+/* ── Три реальных числа правил ──────────────────────────────────────── */
+
+.rules {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: var(--space-md) 0;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.rules > div { padding: var(--space-sm) var(--space-2xs); text-align: center; }
+.rules > div + div { border-left: 1px solid var(--color-rule); }
+.rules b {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--text-xl);
+  line-height: 1.1;
+  color: var(--color-ink);
+}
+.rules span {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* ── Кладовка: фокусный артефакт во всю ширину ───────────────────────── */
+
+.lot {
+  margin: 0 calc(var(--gutter) * -1) var(--space-sm);
+  border-block: 1px solid var(--color-rule);
+  background: var(--color-paper);
+}
+.lot-img { background: var(--color-paper); overflow: clip; }
+.lot-img img { display: block; width: 100%; height: auto; }
+
+.lot-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--gutter) 0;
+}
+.lot-name { font-size: var(--text-sm); color: var(--color-ink); }
+.lot-tier { color: var(--color-muted); white-space: nowrap; }
+
+/* Три приборных вывода под сценой — только реальные значения состояния. */
+.readout {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--gutter) var(--space-sm);
+  border-bottom: 1px solid var(--color-rule);
+}
+.readout b {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--text-md);
+  color: var(--color-ink);
+  letter-spacing: -0.01em;
+}
+
+/* Разбор кладовки: список «картинка — цена», от дорогой к дешёвой. */
+.items {
+  list-style: none;
+  margin: var(--space-2xs) 0 0;
+  padding: 0 var(--gutter) var(--space-sm);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3xs) var(--space-2xs);
+}
+.items li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3xs);
+  font-size: 12px;
+  color: var(--color-ink-2);
+  background: var(--color-paper-3);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-input);
+  padding: 4px 8px 4px 4px;
+}
+.items img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  background: var(--color-paper);
+  border-radius: 3px;
+}
+.items .nm {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.items .pr {
+  font-family: var(--font-label);
+  color: var(--color-ink);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ── Таймер-шкала ────────────────────────────────────────────────────── */
+
+.meter {
+  position: relative;
+  height: 22px;
+  background: var(--color-paper-3);
+  border-radius: 2px;
+  overflow: clip;
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 6px);
+  mask-image: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 6px);
+}
+.meter i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--color-accent);
+  /* прибор не мигает — шкала печатная, а не живая лента */
+}
+
+.clock {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  margin: var(--space-sm) 0 var(--space-2xs);
+}
+.clock b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(2.75rem, 14vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--color-ink);
+}
+
+.money { color: var(--color-muted); font-size: var(--text-sm); margin-bottom: var(--space-2xs); }
+.money b { color: var(--color-ink); font-size: var(--text-md); font-weight: 600; }
+
+/* ── Разбор ──────────────────────────────────────────────────────────── */
+
+.value {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(2.5rem, 12vw, 3.5rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--color-ink); /* сплошной ink, без background-clip */
+  text-align: left;
+  margin: var(--space-sm) 0 0;
+}
+.value-sub { font-size: var(--text-sm); color: var(--color-muted); }
+.winner { margin: var(--space-sm) 0 0; color: var(--color-ink); max-width: 42ch; }
+
+/* ── Списки игроков ──────────────────────────────────────────────────── */
+
+.players { list-style: none; margin: 0 0 var(--space-md); padding: 0; display: grid; gap: 2px; }
+.player {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 0.7rem 0.85rem;
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+/* «Я» помечается маленьким латунным квадратом, а не полосой по краю. */
+.player.me { border-color: var(--color-accent); }
+.player.me > span:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-right: 8px;
+  border-radius: 1px;
+  background: var(--color-accent);
+  vertical-align: middle;
+}
+.player.gone { opacity: 0.45; }
+/* Имена игроков — пользовательские данные, регистр не трогаем. */
+.player > span:first-child { min-width: 0; text-transform: none; }
+.player .pip, .player .nums { font-family: var(--font-label); font-size: 11px; letter-spacing: 0.06em; color: var(--color-muted); text-transform: uppercase; white-space: nowrap; }
+.player .nums b { color: var(--color-ink); }
+.crown { font-style: normal; color: var(--color-accent); }
+
+/* Монета вместо знака валюты. Рисуем кругом, а не картинкой: в списке игроков
+   знак стоит рядом с именем, и глиф там спорит с текстом по весу. */
+.coin {
+  display: inline-block;
+  width: 0.68em;
+  height: 0.68em;
+  border-radius: 50%;
+  vertical-align: 0.02em;
+  background: var(--color-accent);
+  box-shadow: inset 0 0 0 1px oklch(88% 0.14 55 / 0.75);
+}
+.coin::after {
+  content: '';
+  display: block;
+  width: 0.24em;
+  height: 0.24em;
+  margin: 0.22em auto;
+  border-radius: 50%;
+  background: var(--color-accent-ink);
+}
+.players.compact .player { padding: 0.6rem 0.75rem; }
+
+.standings { list-style: none; margin: var(--space-md) 0; padding: 0; display: grid; gap: 2px; }
+.standings .row {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.7rem 0.85rem;
+  background: var(--color-paper-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-card);
+}
+.standings .row.me { border-color: var(--color-accent); }
+.place { font-family: var(--font-label); font-size: 12px; color: var(--color-muted); }
+.nm { min-width: 0; text-transform: none; }
+.sc { font-family: var(--font-display); font-size: var(--text-lg); color: var(--color-ink); }
+
+/* ── Тост ────────────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(1.5rem + env(safe-area-inset-bottom));
+  transform: translate(-50%, 12px);
+  max-width: min(90%, 26rem);
+  padding: 0.7rem 1rem;
+  background: var(--color-paper-3);
+  border: 1px solid var(--color-rule-2);
+  border-radius: var(--radius-input);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-short) var(--ease-soft),
+              transform var(--dur-short) var(--ease-soft);
+  z-index: var(--z-toast);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ── Узкие экраны ────────────────────────────────────────────────────── */
+
+@media (max-width: 22.5rem) {
+  :root { --gutter: 1rem; }
+  .brand { max-width: 11ch; }
+  .rules b { font-size: var(--text-lg); }
+  .quick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+  .lede em::after { transform: scaleX(1); }
+}

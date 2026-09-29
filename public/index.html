@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#141320">
+<title>Аукцион кладовок</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Literata:opsz,wght@7..72,400&family=Manrope:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Вход ─────────────────────────────────────────────── -->
+  <section id="scr-auth" class="screen active">
+    <p class="mono auth__label">слепой аукцион · 2–6 игроков</p>
+    <h1 class="brand">аукцион кладовок</h1>
+    <p class="lede">кто <em>поставит</em> больше — заберёт кладовку целиком.</p>
+
+    <input id="f-name" class="field" maxlength="18" placeholder="твоё имя" autocomplete="nickname">
+    <div class="row">
+      <input id="f-code" class="field" maxlength="4" placeholder="КОД" autocapitalize="characters" inputmode="text">
+      <button id="b-join" class="btn ghost">войти</button>
+    </div>
+    <button id="b-create" class="btn wide">создать комнату</button>
+    <p id="auth-err" class="err"></p>
+  </section>
+
+  <!-- ── Лобби ────────────────────────────────────────────── -->
+  <section id="scr-lobby" class="screen">
+    <div class="bar card">
+      <span class="mono">комната</span>
+      <b id="lobby-code" class="code">····</b>
+      <span></span>
+    </div>
+
+    <p class="hint">передай код друзьям. нужно от 2 до <span id="lobby-max">6</span> игроков.</p>
+    <ul id="lobby-players" class="players"></ul>
+
+    <div class="rules">
+      <div><b id="r-rounds">15</b><span>раундов</span></div>
+      <div><b id="r-start">1000</b><span>старт</span> <i class="coin"></i></div>
+      <div><b id="r-income">+50</b><span>доход</span> <i class="coin"></i></div>
+    </div>
+
+    <button id="b-ready" class="btn ghost wide">я готов</button>
+    <button id="b-start" class="btn wide" disabled>начать игру</button>
+    <button id="b-leave" class="btn ghost wide">выйти</button>
+  </section>
+
+  <!-- ── Раунд ────────────────────────────────────────────── -->
+  <section id="scr-game" class="screen">
+    <div class="bar card">
+      <span class="mono">раунд <b id="g-round">0/0</b></span>
+      <div class="meter" aria-hidden="true"><i id="g-timer"></i></div>
+      <span class="mono" id="g-phase">—</span>
+    </div>
+
+    <div class="lot">
+      <div class="lot-img"><img id="g-img" alt="кладовка"></div>
+      <div class="lot-caption">
+        <span class="lot-name" id="g-name">—</span>
+        <span class="mono lot-tier" id="g-tier"></span>
+      </div>
+      <div class="readout">
+        <div><b id="q-count">—</b><span class="mono">предметов</span></div>
+        <div><b id="q-max">—</b><span class="mono">макс ставка</span></div>
+        <div><b><span id="g-secs">0</span></b><span class="mono">секунд</span></div>
+      </div>
+    </div>
+
+    <!-- Торги: аукцион открытый, ставку видно всем и её можно перебить -->
+    <div id="g-bid" class="phase">
+      <div class="clock"><b id="g-timer-text">20</b><span class="mono">осталось</span></div>
+      <div class="money" id="g-high">лидер: <b id="g-leader">никто</b><span class="sep">·</span>ставка <b id="g-highbid">—</b> <i class="coin"></i></div>
+      <p class="hint" id="g-bidhint">кто первый поставит — тот лидер</p>
+      <div class="money">твой капитал: <b id="g-money">0</b> <i class="coin"></i></div>
+      <input id="g-amount" class="field" type="number" inputmode="numeric" min="1" step="10" placeholder="ставка">
+      <div class="quick">
+        <button class="btn chip" data-step="10">+10</button>
+        <button class="btn chip" data-step="50">+50</button>
+        <button class="btn chip" data-step="100">+100</button>
+        <button class="btn chip" data-step="500">+500</button>
+      </div>
+      <button id="b-bid" class="btn wide">перебить</button>
+      <p id="g-bidstate" class="ok">ставка принята</p>
+      <p id="g-err" class="err"></p>
+    </div>
+
+    <!-- Разбор: сумма и разбор по частям -->
+    <div id="g-reveal" class="phase">
+      <div class="value" id="g-value">—</div>
+      <div class="value-sub" id="g-valuesub"></div>
+      <p id="g-winner" class="winner"></p>
+      <p class="hint" id="g-items-hint" hidden>из чего сложилась сумма</p>
+      <ul id="g-items" class="items"></ul>
+    </div>
+
+    <ul id="g-players" class="players compact"></ul>
+    <button id="b-quit" class="btn ghost wide">выйти из игры</button>
+  </section>
+
+  <!-- ── Итоги ────────────────────────────────────────────── -->
+  <section id="scr-over" class="screen">
+    <p class="mono auth__label">итоги</p>
+    <ol id="o-table" class="standings"></ol>
+    <button id="b-again" class="btn wide">ещё раз</button>
+    <button id="b-out" class="btn ghost wide">выйти</button>
+  </section>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

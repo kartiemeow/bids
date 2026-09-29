@@ -1,0 +1,24 @@
+{
+  "name": "lotsgame",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Аукцион кладовок — многопользовательская игра с открытыми перебиваемыми ставками",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tools/test-game.js",
+    "test:net": "node tools/smoke-server.js",
+    "test:layout": "node tools/test-pile-layout.js",
+    "gen:images": "node tools/gen-images.js",
+    "gen:sheet": "node tools/contact-sheet.js",
+    "check:art": "node tools/check-art.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
