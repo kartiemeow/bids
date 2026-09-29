@@ -1,121 +1,105 @@
-// Скрытая ценность и маскировка.
+// Экономика аукциона: из чего складывается кладовка.
 //
-// Главная идея: игрок видит картинку и не знает цену. Тир картинки
-// (cheap/mid/rich) определяет только художественный стиль, настоящая стоимость
-// живёт здесь. Дешёвая коробка может лежать в кладовке с золотом, поэтому
-// цену нельзя выводить из src/catalog.js — она обязана быть отдельной величиной
-// со своим ГПСЧ и своей шкалой.
-
-import { makeRng } from './rng.js';
-
-// Полосы стоимости одного предмета. Внутри полосы разброс большой, чтобы знание
-// полосы не гарантировало успех: между 2 и 20 разница вдесятеро.
+// Цена предмета живёт в каталоге (catalog.js, поле v) и не меняется от раунда к
+// раунду. Здесь описано только то, как предметы складываются в кладовку и как
+// называется получившаяся сумма.
 //
-// Шкала подобрана под 10–15 предметов в кладовке: сумма кладовки держится
-// примерно в тех же пределах, что и при 2–6 предметах, поэтому капитал,
-// доход и ставки остаются сопоставимыми на всех 15 раундах. Менять предметов
-// в кладовке можно только вместе с пересчётом этих полос.
-export const BANDS = [
-  { id: 'junk',  label: 'Хлам',        min: 2,   max: 20,   tint: '#4b5563' },
-  { id: 'low',   label: 'Скромная',    min: 20,  max: 70,   tint: '#6ee7b7' },
-  { id: 'mid',   label: 'Солидная',    min: 70,  max: 225,  tint: '#60a5fa' },
-  { id: 'high',  label: 'Крупная',     min: 225, max: 580,  tint: '#c084fc' },
-  { id: 'vault', label: 'Удивительно', min: 580, max: 1350, tint: '#fbbf24' },
-  { id: 'legend',label: 'Легенда',     min: 1350, max: 2900, tint: '#f472b6' },
+// Главное отличие от прежней схемы: раньше цена каждого предмета бросалась
+// заново из полосы, поэтому кладовку невозможно было выучить — только угадать.
+// Теперь сумма кладовки — это просто сумма фиксированных цен, и игрок, который
+// знает каталог, может прикинуть её по картинке. Неопределённость осталась в
+// другом месте: предметы лежат в завале, часть завалена, а настроение сцены не
+// обязано совпадать с содержимым.
+
+import { CATALOG } from './catalog.js';
+
+// ── Состав кладовки ────────────────────────────────────────────────────
+// Профили описывают не цену, а пропорцию: сколько дорогих и сколько средних
+// вещей попадёт в кладовку. Сумма после этого — следствие, а не цель, поэтому
+// она честно называется по факту (см. bandForValue).
+
+const COMPOSITIONS = [
+  { id: 'junk',      weight: 24, total: [10, 12], rich: [0, 0], mid: [0, 1] },
+  { id: 'modest',    weight: 27, total: [10, 13], rich: [0, 1], mid: [2, 3] },
+  { id: 'solid',     weight: 23, total: [11, 14], rich: [1, 2], mid: [3, 4] },
+  { id: 'big',       weight: 16, total: [12, 14], rich: [2, 3], mid: [4, 5] },
+  { id: 'treasure',  weight: 10, total: [13, 15], rich: [3, 4], mid: [5, 6] },
 ];
 
-export function bandById(id) {
-  return BANDS.find((b) => b.id === id) || BANDS[0];
-}
-
-// Настоящий «класс» лота: три ступени на вид, шесть полос на деньги.
-// Картинка рисуется по этому классу, а не по полосе — иначе обмана нет.
-const BAND_TIER = {
-  junk: 'cheap', low: 'cheap', mid: 'mid',
-  high: 'rich', vault: 'rich', legend: 'rich',
+const BY_TIER = {
+  rich: CATALOG.filter((i) => i.t === 'rich'),
+  mid: CATALOG.filter((i) => i.t === 'mid'),
+  cheap: CATALOG.filter((i) => i.t === 'cheap'),
 };
 
-export function trueTierOf(bandId) {
-  return BAND_TIER[bandId];
-}
+export const TIER_POOLS = BY_TIER;
 
-// Маскировка. С настоящего класса выбираем тир картинки так, чтобы игрок
-// систематически ошибался: дорогому предмету чаще показывают дешёвую картинку.
-const MASK_FOR_TIER = {
-  cheap: { cheap: 0.55, mid: 0.35, rich: 0.10 },
-  mid:   { cheap: 0.40, mid: 0.42, rich: 0.18 },
-  rich:  { cheap: 0.18, mid: 0.40, rich: 0.42 },
-};
-
-export function maskTierFor(rnd, bandId) {
-  const table = MASK_FOR_TIER[trueTierOf(bandId)];
-  let roll = rnd();
-  for (const tier of ['cheap', 'mid', 'rich']) {
-    roll -= table[tier];
-    if (roll <= 0) return tier;
+/**
+ * Разложить профиль на конкретные количества: сколько предметов всего,
+ * сколько из них дорогих и средних. Остальное — дешёвые.
+ */
+export function rollComposition(rnd) {
+  const totalWeight = COMPOSITIONS.reduce((s, c) => s + c.weight, 0);
+  let roll = rnd() * totalWeight;
+  let profile = COMPOSITIONS[0];
+  for (const c of COMPOSITIONS) {
+    roll -= c.weight;
+    if (roll <= 0) { profile = c; break; }
   }
-  return 'cheap';
+
+  const total = rnd.int(profile.total[0], profile.total[1]);
+  const rich = rnd.int(profile.rich[0], profile.rich[1]);
+  const mid = rnd.int(profile.mid[0], Math.min(profile.mid[1], total - rich));
+  const cheap = Math.max(0, total - rich - mid);
+  return { id: profile.id, total, rich, mid, cheap };
 }
 
-// Бросок одной полосы по таблице весов. Таблица — объект { bandId: weight }.
-export function rollBandId(rnd, weights) {
-  let total = 0;
-  for (const k in weights) total += weights[k];
-  let roll = rnd() * total;
-  for (const band of BANDS) {
-    roll -= weights[band.id] || 0;
-    if (roll <= 0) return band.id;
-  }
-  return 'junk';
-}
+// ── Как называется сумма ───────────────────────────────────────────────
+// Название выводится из настоящей суммы, поэтому в разборе оно всегда правда.
 
-// Цена одного предмета. Смещение к нижнему краю полосы, но не прилипание к нему:
-// чаще попадается начало диапазона, верхний край — редкость.
-export function rollValue(rnd, weights) {
-  const bandId = rollBandId(rnd, weights);
-  const band = bandById(bandId);
-  const t = Math.pow(rnd(), 1.45);
-  return { value: Math.round(band.min + t * (band.max - band.min)), bandId };
-}
-
-// ── Кладовка целиком ──────────────────────────────────────────────────
-// Полоса кладовки задаёт не сумму, а микс предметов внутри. Так суммарная
-// цена распределяется естественно, а не подгоняется под круглое число.
-
-export const PILE_BANDS = [
-  { id: 'trash',    label: 'Хлам в углу',  weight: 24, min: 10, max: 12, tint: '#4b5563' },
-  { id: 'modest',   label: 'Скромная',     weight: 27, min: 10, max: 13, tint: '#6ee7b7' },
-  { id: 'solid',    label: 'Солидная',     weight: 23, min: 11, max: 14, tint: '#60a5fa' },
-  { id: 'big',      label: 'Крупная',      weight: 16, min: 12, max: 14, tint: '#c084fc' },
-  { id: 'treasure', label: 'Сокровище',    weight: 10, min: 13, max: 15, tint: '#fbbf24' },
+export const VALUE_BANDS = [
+  { id: 'junk',     label: 'Хлам в углу', max: 300 },
+  { id: 'modest',   label: 'Скромная',   max: 800 },
+  { id: 'solid',    label: 'Солидная',   max: 1400 },
+  { id: 'big',      label: 'Крупная',    max: 2000 },
+  { id: 'treasure', label: 'Сокровище',  max: Infinity },
 ];
 
-// Веса полос предметов внутри кладовки. Сокровище — это не « дорогой предмет,
-// показанный красиво», а несколько крупных вещей, спрятанных среди хлама.
-const PILE_MIX = {
-  trash:    { junk: 62, low: 28, mid: 8,   high: 2,   vault: 0,  legend: 0 },
-  modest:   { junk: 34, low: 44, mid: 17,  high: 5,   vault: 0,  legend: 0 },
-  solid:    { junk: 15, low: 34, mid: 34,  high: 14,  vault: 3,  legend: 0 },
-  big:      { junk: 6,  low: 19, mid: 36,  high: 28,  vault: 10, legend: 1 },
-  treasure: { junk: 10, low: 18, mid: 28,  high: 28,  vault: 14, legend: 2 },
-};
-
-export function pileBandById(id) {
-  return PILE_BANDS.find((b) => b.id === id) || PILE_BANDS[0];
+export function bandForValue(sum) {
+  return VALUE_BANDS.find((b) => sum < b.max) || VALUE_BANDS[VALUE_BANDS.length - 1];
 }
 
-export function rollPileBand(rnd) {
-  let total = PILE_BANDS.reduce((s, b) => s + b.weight, 0);
-  let roll = rnd() * total;
-  for (const band of PILE_BANDS) {
-    roll -= band.weight;
-    if (roll <= 0) return band;
+// ── Маскировка картинки ────────────────────────────────────────────────
+// Тон сцены — намёк, а не ответ. Раньше он выбирался почти наугад, и картинка
+// не значила вообще ничего: выглядевшие дорого кладовки стоили столько же,
+// сколько выглядевшие дёшево, и торг превращался в лотерею. Теперь тон
+// отталкивается от настоящей полосы суммы, но почти в половине случаев
+// показывает другую: картинка остаётся полезной и при этом регулярно врёт.
+
+export const MOOD_BY_BAND = ['cheap', 'cheap', 'mid', 'rich', 'rich'];
+const TRUTH_RATE = 0.4;
+// На какую полосу смотрит картинка, когда врёт. Смещение у краёв шкалы: ложь
+// всегда прыгает через полосу, а не сдвигается на соседнюю. Завал хлама от
+// этого выглядит заметным сокровищем, а не «почти дорогим», — обман заметен
+// и запоминается, но настоящую полосу по картинке не восстановить.
+const LIE_PRIOR = [0.3, 0.1, 0.1, 0.2, 0.3];
+
+/**
+ * Тон сцены для кладовки.
+ * @param bandId настоящая полоса суммы (см. VALUE_BANDS)
+ */
+export function maskMood(rnd, bandId) {
+  const idx = Math.max(0, VALUE_BANDS.findIndex((b) => b.id === bandId));
+  let j = idx;
+  if (!rnd.chance(TRUTH_RATE)) {
+    let roll = rnd();
+    j = VALUE_BANDS.length - 1;
+    for (let k = 0; k < LIE_PRIOR.length; k++) {
+      roll -= LIE_PRIOR[k];
+      if (roll <= 0) { j = k; break; }
+    }
   }
-  return PILE_BANDS[0];
-}
-
-export function mixFor(pileBandId) {
-  return PILE_MIX[pileBandId] || PILE_MIX.solid;
+  return MOOD_BY_BAND[j];
 }
 
 export const TIER_LABEL = { cheap: 'Дешёвый вид', mid: 'Средний вид', rich: 'Дорогой вид' };

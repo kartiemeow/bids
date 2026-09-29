@@ -403,6 +403,16 @@ body {
 .money { color: var(--color-muted); font-size: var(--text-sm); margin-bottom: var(--space-2xs); }
 .money b { color: var(--color-ink); font-size: var(--text-md); font-weight: 600; }
 
+/* Текущая ставка — цифра того же калибра, что и оставшееся время: это два
+   главных числа раунда, и раньше они читались по-разному. */
+.money--bid b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(2.75rem, 14vw, 4rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
 /* ── Разбор ──────────────────────────────────────────────────────────── */
 
 .value {
@@ -448,6 +458,15 @@ body {
 .player .pip, .player .nums { font-family: var(--font-label); font-size: 11px; letter-spacing: 0.06em; color: var(--color-muted); text-transform: uppercase; white-space: nowrap; }
 .player .nums b { color: var(--color-ink); }
 .crown { font-style: normal; color: var(--color-accent); }
+
+/* Заложенная сумма у лидера торгов. Держим её тише короны: это уточнение,
+   а не главное событие, но без него не видно, сколько денег сейчас в лоте. */
+.hold {
+  font-style: normal;
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
 
 /* Монета вместо знака валюты. Рисуем кругом, а не картинкой: в списке игроков
    знак стоит рядом с именем, и глиф там спорит с текстом по весу. */

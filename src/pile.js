@@ -1,76 +1,55 @@
 // Состав кладовки: несколько предметов, уложенных вразнобой.
 //
-// Сначала выбирается полоса самой кладовки (от «хлама в углу» до «сокровища»),
-// и уже по ней раздаётся микс предметов. Так суммарная цена получается
-// естественной, а «сокровище» — это несколько крупных вещей, затерянных среди
-// мусора, а не одна дорогая картинка в центре.
+// Цена кладовки — это сумма ФИКСИРОВАННЫХ цен её предметов (поле v в
+// каталоге). Раньше цена каждого предмета бросалась заново в каждом раунде, и
+// кладовку было невозможно выучить: оставалось только гадать. Теперь сумма
+// однозначна, и ценность игры в том, чтобы по картинке завала понять, что
+// внутри. Не видно при этом половину предметов (см. test-pile-layout), плюс тон
+// сцены сбит с содержимым — см. maskMood.
 
-import { CATALOG } from './catalog.js';
-import {
-  rollPileBand, mixFor, rollValue, maskTierFor, pileBandById,
-} from './values.js';
-
-const BY_ID = new Map(CATALOG.map((i) => [i.id, i]));
-
-// Показываемый тир кладовки — по большинству тиров её предметов. От него
-// зависит настроение света, но не цена.
-function dominantTier(items) {
-  const count = { cheap: 0, mid: 0, rich: 0 };
-  for (const it of items) count[it.shownTier]++;
-  return ['cheap', 'mid', 'rich'].reduce((a, b) => (count[a] >= count[b] ? a : b));
-}
+import { rollComposition, bandForValue, maskMood } from './values.js';
 
 /**
  * Собрать кладовку.
  * @param rnd      детерминированный ГПСЧ комнаты
- * @param drawIds  функция(count) -> массив неповторяющихся lotId
- * @param count    сколько предметов класть (переопределяет разброс полосы)
+ * @param drawLots функция(profile) -> массив предметов каталога без повторов
  */
-export function makePile(rnd, drawIds, count) {
-  const band = rollPileBand(rnd);
-  const total = count || rnd.int(band.min, band.max);
-  const ids = drawIds(total);
-  const mix = mixFor(band.id);
-
-  const items = ids.map((lotId) => {
-    const meta = BY_ID.get(lotId);
-    const v = rollValue(rnd, mix);
-    return {
-      lotId,
-      name: meta ? meta.n : lotId,
-      // Тир картинки намеренно сбит с настоящей полосы предмета.
-      shownTier: maskTierFor(rnd, v.bandId),
-      // Скрытая часть: наружу не отдаётся до разбора.
-      _value: v.value,
-      _bandId: v.bandId,
-    };
-  });
+export function makePile(rnd, drawLots) {
+  const profile = rollComposition(rnd);
+  const lots = drawLots(profile);
+  const items = lots.map((m) => ({ lotId: m.id, name: m.n, tier: m.t, _value: m.v }));
+  const total = items.reduce((s, i) => s + i._value, 0);
+  const band = bandForValue(total);
 
   return {
     items,
     count: items.length,
-    shownTier: dominantTier(items),
+    // Тон сцены — намёк, а не приговор: картинка обязана и помогать, и обманывать.
+    // Считается от настоящей полосы суммы, поэтому картинка хоть что-то значит,
+    // но в трети случаев показывает соседнюю полосу (см. maskMood).
+    shownTier: maskMood(rnd, band.id),
+    // Название полосы выводится из настоящей суммы, поэтому в разборе правда.
     bandId: band.id,
-    bandLabel: pileBandById(band.id).label,
-    _value: items.reduce((s, i) => s + i._value, 0),
+    bandLabel: band.label,
+    _value: total,
   };
 }
 
-// Снимок для клиента. До разбора цены не отдаём: настоящую сумму знает
-// только сервер. В разборе возвращаем цену каждой вещи — по ней клиент
-// сортирует список «от дорогой к дешёвой», чтобы игрок видел, откуда сумма.
+// Снимок для клиента. До разбора состав НЕ отдаём: при фиксированных ценах
+// список предметов — это и есть сумма кладовки, и в devtools она читалась бы
+// мгновенно, убивая весь аукцион. Наружу уходит только количество предметов.
 export function publicPile(pile, revealed = false) {
   if (!pile) return null;
   return {
     count: pile.count,
     shownTier: pile.shownTier,
-    items: pile.items
-      .map((i) => (revealed
-        ? { lotId: i.lotId, name: i.name, shownTier: i.shownTier, value: i._value }
-        : { lotId: i.lotId, name: i.name, shownTier: i.shownTier }))
-      // В разборе список идёт от самой дорогой вещи к самой дешёвой: игрок
-      // видит, из чего сложилась сумма. Порядок задаёт сервер, чтобы у всех
-      // клиентов он был одинаковым.
-      .sort((a, b) => ((b.value ?? -1) - (a.value ?? -1))),
+    items: revealed
+      ? pile.items
+        .map((i) => ({ lotId: i.lotId, name: i.name, tier: i.tier, value: i._value }))
+        // В разборе список идёт от самой дорогой вещи к самой дешёвой: игрок
+        // видит, из чего сложилась сумма. Порядок задаёт сервер, чтобы у всех
+        // клиентов он был одинаковым.
+        .sort((a, b) => b.value - a.value)
+      : [],
   };
 }

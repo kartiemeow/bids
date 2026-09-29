@@ -187,7 +187,9 @@ await b.waitState((s) => s && s.players.length === 2);
 const bad = await b.emit('join', { name: 'В', code: 'ZZZZ' });
 check('несуществующая комната отклонена', !!(bad && bad.error), JSON.stringify(bad));
 
-check('у обоих по 2 игрока', a.state.players.length === 2 && b.state.players.length === 2);
+await a.waitState((s) => s && s.players.length === 2);
+check('у обоих по 2 игрока', a.state.players.length === 2 && b.state.players.length === 2,
+  `у Ани ${a.state.players.length}, у Бориса ${b.state.players.length}`);
 check('в снимке нет secret', !JSON.stringify(a.state).includes('secret'));
 check('в снимке нет поля bid', a.state.players.every((p) => !('bid' in p)));
 check('в лобби кладовки нет', a.state.pile === null);
@@ -229,7 +231,9 @@ console.log('\n[6] Картинка кладовки');
 const pile = a.state.pile;
 check('кладовка в снимке', !!pile, JSON.stringify(pile));
 check('в кладовке несколько предметов', pile.count >= 2, `предметов: ${pile.count}`);
-check('состав виден игроку', pile.items.length === pile.count);
+// Состав до разбора не отдаём: при фиксированных ценах предметов список вещей —
+// это и есть сумма кладовки, и в devtools она читалась бы мгновенно.
+check('состав кладовки не утекает', pile.items.length === 0, `предметов в снимке: ${pile.items.length}`);
 check('цена скрыта в торгах', pile.value === null);
 check('цены вещей скрыты в торгах', pile.items.every((i) => !('value' in i)));
 check('нет служебных полей', !JSON.stringify(pile).includes('_value'));
@@ -256,46 +260,108 @@ check('чужая комната не отдаёт кладовку', badPile.st
 // ── Открытый аукцион ──────────────────────────────────────────────────
 
 console.log('\n[5] Открытый аукцион: перебития');
-// Первая ставка открывает торги и сгорает сразу.
-const r1 = await a.emit('raise', { amount: 100 });
-check('первая ставка принята', !!(r1 && r1.ok), JSON.stringify(r1));
-await b.waitState((s) => s && s.highBid === 100);
-check('ставка видна сопернику сразу', b.state.highBid === 100, String(b.state.highBid));
-check('лидер виден сопернику', b.state.highBidderName === 'Аня', b.state.highBidderName);
-const moneyA0 = a.state.players.find((p) => p.name === 'Аня').money;
-check('ставка списана с лидера', moneyA0 === 1050 - 100, String(moneyA0));
+// Кладовка может оказаться дороже капитала, и тогда лот не продастся: правила
+// торгов проверяем в любом случае, а разбор ловим на первом же проданном лоте,
+// переигрывая раунды. Сумму кладовки снимок не отдаёт — оценивать её по
+// картинке и есть игра, поэтому подглядывать нельзя даже тесту. Все проверки
+// считаются разностью до и после: после невыкупленного раунда у игроков и
+// капитал, и сгоревшие разницы уже не те, что были в начале попытки.
+let sold = null;
 
-// Шаг в 10 монет: меньше нельзя, ровно шаг — можно.
-const tiny = await b.emit('raise', { amount: 105 });
-check('перебитие меньше шага отклонено', !!(tiny && tiny.error), JSON.stringify(tiny));
-const r2 = await b.emit('raise', { amount: 110 });
-check('перебитие на шаг принято', !!(r2 && r2.ok), JSON.stringify(r2));
-await a.waitState((s) => s && s.highBid === 110);
-check('окно на перебитие — 10 секунд', a.state.phaseMs === 10000, String(a.state.phaseMs));
-const moneyB0 = b.state.players.find((p) => p.name === 'Борис').money;
-check('ставка перебитого не вернулась', moneyB0 === 1050 - 110, String(moneyB0));
+for (let attempt = 0; attempt < 6 && !sold; attempt++) {
+  if (a.state.phase !== 'bid') {
+    await a.waitState((s) => s.phase === 'bid' || s.phase === 'lobby' || s.phase === 'finished', 30000);
+    if (a.state.phase !== 'bid') break;
+  }
+  // Ждём ту же фазу у второго игрока: снимки приходят независимо, и без этого
+  // в before попали бы его деньги за прошлый раунд — до начисления дохода.
+  await b.waitState((s) => s.phase === 'bid', 30000);
+  if (b.state.phase !== 'bid') break;
+  const preA = a.state.players.find((p) => p.name === 'Аня');
+  const preB = b.state.players.find((p) => p.name === 'Борис');
+  const before = {
+    moneyA: preA.money, moneyB: preB.money, burnedA: preA.burned, burnedB: preB.burned,
+  };
+  // Ставим как можно больше, не выходя за лимит сервера: так лот выкупается
+  // чаще, и проверка не зависит от того, какой лот выпал.
+  const cap = Math.floor(before.moneyA * 0.9);
+  const base = Math.max(10, Math.min(cap - 30, Math.floor(before.moneyA * 0.5)));
 
-// Аня возвращается и перебивает обратно: теперь лот её.
-const r3 = await a.emit('raise', { amount: 120 });
-check('прежний лидер перебил обратно', !!(r3 && r3.ok), JSON.stringify(r3));
-await b.waitState((s) => s && s.highBid === 120 && s.highBidderName === 'Аня');
+  const r1 = await a.emit('raise', { amount: base });
+  check('первая ставка принята', !!(r1 && r1.ok), JSON.stringify(r1));
+  if (!(r1 && r1.ok)) break;
+  await b.waitState((s) => s && s.highBid === base);
+  check('ставка видна сопернику сразу', b.state.highBid === base, String(b.state.highBid));
+  check('лидер виден сопернику', b.state.highBidderName === 'Аня', b.state.highBidderName);
+  const moneyA0 = a.state.players.find((p) => p.name === 'Аня').money;
+  check('ставка заморожена у лидера', moneyA0 === before.moneyA - base,
+    `${moneyA0} вместо ${before.moneyA - base}`);
 
-// Дальше никто не перебивает, поэтому лот уходит лидеру по таймеру окна.
-await a.waitState((s) => s.phase === 'reveal', 20000);
-await b.waitState((s) => s.phase === 'reveal', 20000);
-check('лот ушёл лидеру последней ставки', a.state.pile.winner === 'Аня', String(a.state.pile.winner));
-check('победил по ставке 120', a.state.pile.winnerBid === 120, String(a.state.pile.winnerBid));
-check('в разборе видны цены вещей', a.state.pile.items.every((i) => typeof i.value === 'number'));
-check('разбор отсортирован по убыванию',
-  a.state.pile.items.every((i, k, arr) => k === 0 || arr[k - 1].value >= i.value));
-check('сумма вещей равна цене кладовки',
-  a.state.pile.items.reduce((t, i) => t + i.value, 0) === a.state.pile.value);
+  // Шаг в 10 монет: меньше нельзя, ровно шаг — можно.
+  const tiny = await b.emit('raise', { amount: base + 5 });
+  check('перебитие меньше шага отклонено', !!(tiny && tiny.error), JSON.stringify(tiny));
+  const r2 = await b.emit('raise', { amount: base + 10 });
+  check('перебитие на шаг принято', !!(r2 && r2.ok), JSON.stringify(r2));
+  if (!(r2 && r2.ok)) break;
+  await a.waitState((s) => s && s.highBid === base + 10);
+  check('окно на перебитие — 10 секунд', a.state.phaseMs === 10000, String(a.state.phaseMs));
+  const moneyB0 = b.state.players.find((p) => p.name === 'Борис').money;
+  check('ставка перебитого заморожена', moneyB0 === before.moneyB - (base + 10),
+    `${moneyB0} вместо ${before.moneyB - (base + 10)}`);
 
-// Ставка 120 сгорела у обоих: у Ани 100, потом 120, у Бориса 110.
-const finalA = a.state.players.find((p) => p.name === 'Аня');
-const finalB = b.state.players.find((p) => p.name === 'Борис');
-check('все ставки сгорели', finalA.spent === 220 && finalB.spent === 110,
-  `Аня ${finalA.spent}, Борис ${finalB.spent}`);
+  // Аня возвращается и перебивает обратно: теперь лот её.
+  const r3 = await a.emit('raise', { amount: base + 20 });
+  check('прежний лидер перебил обратно', !!(r3 && r3.ok), JSON.stringify(r3));
+  if (!(r3 && r3.ok)) break;
+  await b.waitState((s) => s && s.highBid === base + 20 && s.highBidderName === 'Аня');
+
+  // Дальше никто не перебивает, поэтому лот уходит лидеру по таймеру окна.
+  await a.waitState((s) => s.phase === 'reveal', 25000);
+  await b.waitState((s) => s.phase === 'reveal', 25000);
+
+  const postA = a.state.players.find((p) => p.name === 'Аня');
+  const postB = b.state.players.find((p) => p.name === 'Борис');
+  if (a.state.pile.void) {
+    check('невыкупленная кладовка не раскрыта',
+      a.state.pile.value === null && a.state.pile.items.length === 0,
+      `цена ${a.state.pile.value}, предметов ${a.state.pile.items.length}`);
+    // Ставку возвращаем целиком: лот не продан, и заморозка должна закрыться.
+    check('ставка невыкупленной кладовки возвращена',
+      postA.money === before.moneyA - 10 && postA.held === 0,
+      `${postA.money} вместо ${before.moneyA - 10}, заморожено ${postA.held}`);
+  } else {
+    sold = { base, pile: a.state.pile, before, postA, postB };
+  }
+}
+
+check('за несколько раундов лот выкупили', !!sold, sold ? '' : 'ни один лот не продан');
+if (sold) {
+  const { base, pile, before, postA, postB } = sold;
+  check('лот ушёл лидеру последней ставки', pile.winner === 'Аня', String(pile.winner));
+  check('победил по последней ставке', pile.winnerBid === base + 20, String(pile.winnerBid));
+  check('в разборе видны цены вещей', pile.items.every((i) => typeof i.value === 'number'));
+  check('разбор отсортирован по убыванию',
+    pile.items.every((i, k, arr) => k === 0 || arr[k - 1].value >= i.value));
+  check('сумма вещей равна цене кладовки',
+    pile.items.reduce((t, i) => t + i.value, 0) === pile.value);
+  // Сгорает не вся ставка, а разница. Аня поставила base, её перебили на
+  // base + 10: сгорело 10, остальное вернулось. Потом она перебила обратно и
+  // заплатила за лот base + 20. У Бориса сгорели те же 10.
+  // spent обнуляется в начале каждого раунда, поэтому тут считаем от нуля.
+  check('сгорели только разницы, лот оплачен полностью',
+    postA.spent === 10 + base + 20 && postB.spent === 10,
+    `Аня ${postA.spent}, Борис ${postB.spent}`);
+  check('разницы совпадают с burned',
+    postA.burned - before.burnedA === 10 && postB.burned - before.burnedB === 10,
+    `Аня ${postA.burned - before.burnedA}, Борис ${postB.burned - before.burnedB}`);
+  check('после разбора заморозка закрыта', postA.held === 0 && postB.held === 0);
+  check('победителю начислена стоимость кладовки',
+    postA.money === before.moneyA - 10 - (base + 20) + pile.value,
+    `${postA.money} вместо ${before.moneyA - 10 - (base + 20) + pile.value}`);
+  check('проигравшему вернули его ставку',
+    postB.money === before.moneyB - 10,
+    `${postB.money} вместо ${before.moneyB - 10}`);
+}
 
 // ── Выход из комнаты ──────────────────────────────────────────────────
 

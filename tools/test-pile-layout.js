@@ -129,19 +129,30 @@ function boxOf(sx, sy, rot, s) {
   return { x0, y0, x1, y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
 }
 
-// Стабильный набор неповторяющихся id на нужное количество.
-function drawIdsFactory(rnd) {
-  const pool = CATALOG.map((i) => i.id);
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = rnd.int(0, i);
-    [pool[i], pool[j]] = [pool[j], pool[i]];
+// Стабильный набор неповторяющихся предметов на нужный состав.
+// Состав задаётся профилем кладовки, поэтому раскладку надо проверять ровно на
+// том, что реально выпадает в игре: столько крупных, столько средних, столько
+// мелочи, а не на плоском списке каталога.
+function drawFactory(rnd) {
+  const byTier = { rich: [], mid: [], cheap: [] };
+  for (const it of CATALOG) byTier[it.t].push(it);
+  for (const t of ['rich', 'mid', 'cheap']) {
+    const p = byTier[t];
+    for (let i = p.length - 1; i > 0; i--) {
+      const j = rnd.int(0, i);
+      [p[i], p[j]] = [p[j], p[i]];
+    }
   }
-  let at = 0;
-  return (count) => {
-    if (at + count > pool.length) at = 0; // добор, если раундов больше лотов
-    const slice = pool.slice(at, at + count);
-    at += count;
-    return slice;
+  const at = { rich: 0, mid: 0, cheap: 0 };
+  return (profile) => {
+    const out = [];
+    for (const t of ['rich', 'mid', 'cheap']) {
+      const n = profile[t] || 0;
+      const p = byTier[t];
+      if (at[t] + n > p.length) at[t] = 0; // добор, если раундов больше лотов
+      for (let k = 0; k < n; k++) out.push(p[at[t]++]);
+    }
+    return out;
   };
 }
 
@@ -164,7 +175,7 @@ let readable = 0;      // задних предметов видно больш�
 
 for (let seed = 1; seed <= 300; seed++) {
   const rng = makeRng(`layout/${seed}`);
-  const pile = makePile(rng, drawIdsFactory(rng), 0);
+  const pile = makePile(rng, drawFactory(rng));
   const svg = renderPile(pile, seed);
 
   RE.lastIndex = 0;

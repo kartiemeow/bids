@@ -7,6 +7,7 @@ const socket = io();
 let me = null;        // наш id
 let state = null;     // последний снимок
 let raf = null;
+let minBid = 1;       // минимальная ставка, которую сейчас принимает сервер
 
 // ── Экраны ───────────────────────────────────────────────────────────
 
@@ -141,6 +142,7 @@ function renderRound(st) {
     const cap = my ? Math.floor((my.money * 0.9) / 10) * 10 : 0;
     $('q-max').textContent = cap;
     const min = st.highBid === null ? 1 : st.highBid + (st.rules.minStep || 10);
+    minBid = min;
     $('g-amount').min = min;
 
     // Лидеру перебивать нечего, и подставлять за него следующую ставку тоже
@@ -160,13 +162,20 @@ function renderRound(st) {
   }
 
   if (st.phase === 'reveal' && st.pile) {
-    $('g-value').innerHTML = `${st.pile.value} <i class="coin"></i>`;
-    $('g-valuesub').textContent = st.pile.bandLabel || '';
-    $('g-winner').textContent = st.pile.void
-      ? 'Кладовку никто не забрал'
-      : (st.pile.winner
+    // Невыкупленную кладовку не разбираем: сумма неизвестна, показывать нечего.
+    // Иначе игрок узнал бы цену лота, который он не купил, и минимальная цена
+    // перестала бы быть тайной.
+    if (st.pile.void) {
+      $('g-value').textContent = '—';
+      $('g-valuesub').textContent = 'ниже минимальной цены';
+      $('g-winner').textContent = 'Кладовка не выкуплена';
+    } else {
+      $('g-value').innerHTML = `${st.pile.value} <i class="coin"></i>`;
+      $('g-valuesub').textContent = st.pile.bandLabel || '';
+      $('g-winner').textContent = st.pile.winner
         ? `${st.pile.winner} — ставка ${st.pile.winnerBid}`
-        : 'Кладовка ушла с молотка');
+        : 'Кладовка ушла с молотка';
+    }
   }
 
   const ul = $('g-players');
@@ -176,7 +185,11 @@ function renderRound(st) {
     const li = document.createElement('li');
     li.className = 'player' + (p.id === me ? ' me' : '') + (live && live.connected ? '' : ' gone');
     const marked = st.phase === 'bid' && live && st.highBidder === p.id;
-    li.innerHTML = `<span>${esc(p.name)}${marked ? ' <i class="crown">ставка</i>' : ''}</span>
+    // Заложено показываем у лидера: его ставка сейчас заморожена, и по новым
+    // правилам именно разница между ставками сгорает при перебитии. Без этой
+    // подсказки счёт «потрачено» выглядит так, будто деньги уже сгорели.
+    const held = marked && live.held ? ` <i class="hold">в лоте ${live.held}</i>` : '';
+    li.innerHTML = `<span>${esc(p.name)}${marked ? ' <i class="crown">ставка</i>' : ''}${held}</span>
       <span class="nums"><b>${p.money}</b> <i class="coin"></i></span>`;
     ul.appendChild(li);
   }
@@ -228,9 +241,21 @@ function join(action) {
   const name = $('f-name').value.trim() || 'Игрок';
   $('auth-err').textContent = '';
   socket.emit(action, action === 'create' ? { name } : { name, code: $('f-code').value.trim() }, (res) => {
-    if (res && res.error) { $('auth-err').textContent = res.error; }
+    if (res && res.error) { $('auth-err').textContent = res.error; return; }
+    rememberName(name);
   });
 }
+
+// Имя держим в localStorage: раньше оно жило только в поле ввода и пропадало
+// при перезаходе на страницу, поэтому каждый раз приходилось вводить заново.
+const NAME_KEY = 'lotsgame.name';
+function rememberName(name) {
+  try { localStorage.setItem(NAME_KEY, name); } catch (e) { /* приватный режим */ }
+}
+function savedName() {
+  try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
+}
+$('f-name').value = savedName();
 
 $('b-create').onclick = () => join('create');
 $('b-join').onclick = () => join('join');
@@ -241,8 +266,8 @@ function leaveRoom() {
   socket.emit('leave');
   // Сервер выводит сокета из комнаты и больше не шлёт ему снимки, поэтому
   // экран переключаем сами: иначе он навсегда замирает на последнем виде.
+  // Имя не стираем — его подставит следующий вход, см. rememberName.
   state = null;
-  $('f-name').value = '';
   $('f-code').value = '';
   $('auth-err').textContent = '';
   show('scr-auth');
@@ -258,7 +283,11 @@ $('b-again').onclick = () => socket.emit('rematch', {}, (r) => {
 });
 
 $('b-bid').onclick = () => {
-  const amount = Math.max(1, Math.round(Number($('g-amount').value) || 0));
+  // Пустое поле — это «поставь минимальную», а не ноль. Раньше сюда уходила
+  // единица, и нажатие «перебить» без ввода цифр отбивалось сервером.
+  const typed = $('g-amount').value.trim();
+  const want = typed === '' ? minBid : Math.round(Number(typed));
+  const amount = Math.max(minBid, Number.isFinite(want) ? want : minBid);
   socket.emit('raise', { amount }, (r) => {
     if (r && r.error) { $('g-err').textContent = r.error; return; }
     $('g-err').textContent = '';
@@ -266,12 +295,13 @@ $('b-bid').onclick = () => {
   });
 };
 
-// Чипы — прибавка к текущей ставке, а не абсолютное число: так «+100»
-// всегда означает «перебить на сотню», сколько бы ни стояло сейчас.
+// Чипы прибавляют к уже введённому числу, а не подставляют своё: раньше
+// повторное нажатие давало то же самое значение, и кнопка выглядела сломанной.
 for (const chip of document.querySelectorAll('.chip')) {
   chip.onclick = () => {
-    const base = state && state.highBid !== null ? state.highBid : 0;
-    $('g-amount').value = base + Number(chip.dataset.step);
+    const typed = $('g-amount').value.trim();
+    const base = typed === '' ? (state && state.highBid !== null ? state.highBid : 0) : Math.round(Number(typed));
+    $('g-amount').value = Math.max(minBid, (Number.isFinite(base) ? base : 0) + Number(chip.dataset.step));
   };
 }
 
