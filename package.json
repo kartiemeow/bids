@@ -10,6 +10,7 @@
     "test": "node tools/test-game.js",
     "test:net": "node tools/smoke-server.js",
     "test:layout": "node tools/test-pile-layout.js",
+    "test:balance": "node tools/probe-balance.js",
     "gen:images": "node tools/gen-images.js",
     "gen:sheet": "node tools/contact-sheet.js",
     "check:art": "node tools/check-art.js"

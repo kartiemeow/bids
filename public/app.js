@@ -137,10 +137,14 @@ function renderRound(st) {
       ? 'кто первый поставит — тот лидер'
       : (meIsLeader ? 'вы лидер. ждём, пока перебьют' : 'перебей, пока не истекло окно');
 
-    // Потолок — тот же, что проверяет сервер: 90% капитала, округлённые вниз
-    // до десятков, иначе игрок упрётся в отказ валидации.
-    const cap = my ? Math.floor((my.money * 0.9) / 10) * 10 : 0;
+    // Потолок берём из снимка: сервер считает его как 90% капитала, но не выше
+    // общей крыши комнаты. Считать здесь заново нельзя — правило перестало быть
+    // «90% от денег», и клиент рано или поздно разойдётся с сервером.
+    const cap = my && typeof my.bidCap === 'number' ? my.bidCap : 0;
     $('q-max').textContent = cap;
+    $('q-maxnote').textContent = cap < st.rules.bidCap
+      ? 'потолок по деньгам'
+      : `общий потолок ${st.rules.bidCap}`;
     const min = st.highBid === null ? 1 : st.highBid + (st.rules.minStep || 10);
     minBid = min;
     $('g-amount').min = min;
@@ -188,7 +192,12 @@ function renderRound(st) {
     // правилам именно разница между ставками сгорает при перебитии. Без этой
     // подсказки счёт «потрачено» выглядит так, будто деньги уже сгорели.
     const held = marked && live.held ? ` <i class="hold">в лоте ${live.held}</i>` : '';
-    li.innerHTML = `<span>${esc(p.name)}${marked ? ' <i class="crown">ставка</i>' : ''}${held}</span>
+    // Перевес показываем у обоих концов: без отметки капитал лидера молча
+    // уменьшается, и выглядит это как ошибка сервера, а не как правило.
+    const levy = live.levyOut
+      ? ` <i class="hold">перевёл ${live.levyOut}</i>`
+      : (live.levyIn ? ` <i class="hold">получил ${live.levyIn}</i>` : '');
+    li.innerHTML = `<span>${esc(p.name)}${marked ? ' <i class="crown">ставка</i>' : ''}${held}${levy}</span>
       <span class="nums"><b>${p.money}</b> <i class="coin"></i></span>`;
     ul.appendChild(li);
   }

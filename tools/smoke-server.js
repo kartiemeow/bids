@@ -287,8 +287,9 @@ for (let attempt = 0; attempt < 6 && !sold; attempt++) {
     moneyA: preA.money, moneyB: preB.money, burnedA: preA.burned, burnedB: preB.burned,
   };
   // Ставим как можно больше, не выходя за лимит сервера: так лот выкупается
-  // чаще, и проверка не зависит от того, какой лот выпал.
-  const cap = Math.floor(before.moneyA * 0.9);
+  // чаще, и проверка не зависит от того, какой лот выпал. Лимит берём из
+  // снимка: он не только доля капитала, но ещё и общая крыша комнаты.
+  const cap = preA.bidCap;
   const base = Math.max(10, Math.min(cap - 30, Math.floor(before.moneyA * 0.5)));
 
   const r1 = await a.emit('raise', { amount: base });

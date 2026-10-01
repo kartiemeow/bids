@@ -307,10 +307,12 @@ body {
 .lot-name { font-size: var(--text-sm); color: var(--color-ink); }
 .lot-tier { color: var(--color-muted); white-space: nowrap; }
 
-/* Три приборных вывода под сценой — только реальные значения состояния. */
+/* Приборные выводы под сценой — только реальные значения состояния. */
 .readout {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* auto-fit, а не три колонки: в приборе стало четыре показателя, и жёсткая
+     тройка отправляла последний на вторую строку с пустой ячейкой. */
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: var(--space-2xs);
   padding: var(--space-xs) var(--gutter) var(--space-sm);
   border-bottom: 1px solid var(--color-rule);
@@ -322,6 +324,12 @@ body {
   font-size: var(--text-md);
   color: var(--color-ink);
   letter-spacing: -0.01em;
+}
+/* Подпись ограничения — слово, а не число, поэтому на строчку ниже. */
+#q-maxnote {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  line-height: 1.2;
 }
 
 /* Разбор кладовки: список «картинка — цена», от дорогой к дешёвой. */
