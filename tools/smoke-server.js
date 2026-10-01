@@ -326,13 +326,10 @@ for (let attempt = 0; attempt < 6 && !sold; attempt++) {
   const postA = a.state.players.find((p) => p.name === 'Аня');
   const postB = b.state.players.find((p) => p.name === 'Борис');
   if (a.state.pile.void) {
+    // Лот без победителя бывает один: лидер ушёл с игры посреди торгов.
     check('невыкупленная кладовка не раскрыта',
       a.state.pile.value === null && a.state.pile.items.length === 0,
       `цена ${a.state.pile.value}, предметов ${a.state.pile.items.length}`);
-    // Ставку возвращаем целиком: лот не продан, и заморозка должна закрыться.
-    check('ставка невыкупленной кладовки возвращена',
-      postA.money === before.moneyA - 10 && postA.held === 0,
-      `${postA.money} вместо ${before.moneyA - 10}, заморожено ${postA.held}`);
   } else {
     sold = { base, pile: a.state.pile, before, postA, postB };
   }

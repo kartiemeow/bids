@@ -113,19 +113,11 @@ while (game.state.phase !== PHASES.FINISHED) {
       // Ставка лидера должна быть списана к этому моменту, а находка
       // начислена ровно один раз.
       const s = game.publicState();
-      if (s.pile.void) {
-        unsold++;
-        if (game.state.round > Math.ceil(RULES.totalRounds / 2)) unsoldLate++;
-        // Невыкупленную кладовку не разбирают: её сумма остаётся тайной, иначе
-        // игрок узнал бы цену лота, который не купил.
-        if (s.pile.value !== null || s.pile.items.length) fail('невыкупленная кладовка раскрыта в разборе');
-      } else {
-        if (typeof s.pile.value !== 'number') fail('цена не раскрыта в разборе');
-        const sum = s.pile.items.reduce((t, i) => t + i.value, 0);
-        if (sum !== s.pile.value) fail(`цены предметов не дают сумму кладовки: ${sum} != ${s.pile.value}`);
-        const desc = s.pile.items.every((i, k, arr) => k === 0 || arr[k - 1].value >= i.value);
-        if (!desc) fail('разбор не отсортирован по убыванию цены');
-      }
+      if (typeof s.pile.value !== 'number') fail('цена не раскрыта в разборе');
+      const sum = s.pile.items.reduce((t, i) => t + i.value, 0);
+      if (sum !== s.pile.value) fail(`цены предметов не дают сумму кладовки: ${sum} != ${s.pile.value}`);
+      const desc = s.pile.items.every((i, k, arr) => k === 0 || arr[k - 1].value >= i.value);
+      if (!desc) fail('разбор не отсортирован по убыванию цены');
       for (const p of game.players) {
         if (p.money < 0) fail(`отрицательные деньги: ${p.name} ${p.money}`);
         minMoney = Math.min(minMoney, p.money);
@@ -226,8 +218,8 @@ const zero = g2.raise('a', 0);
 check('нулевая ставка отклонена', !zero.ok, JSON.stringify(zero));
 
 // Первая ставка открывает аукцион и сразу замораживается. Ставим осмысленную
-// сумму: кладовка заведомо стоит больше минимальной цены, иначе лот просто не
-// продастся и проверки разбора ничего не будут проверять.
+// сумму: проверки ниже сверяют цену кладовки с начислением, и копеечная ставка
+// тут ничего не проверяла бы.
 const worth = g2.state.currentPile._value;
 const openBid = Math.ceil(worth * 0.8 / RULES.minStep) * RULES.minStep;
 const open = g2.raise('a', openBid);
@@ -268,31 +260,33 @@ check('сумма вещей равна цене кладовки',
   rev.pile.items.reduce((t, i) => t + i.value, 0) === rev.pile.value);
 g2.destroy();
 
-// ── 2б. Кладовку ниже минимальной цены не продают ─────────────────────
+// ── 2б. Лот уходит лидеру за любую сумму ─────────────────────────────
 
-console.log('\n[2б] Минимальная цена');
-const g2b = new Game('RSRV');
+console.log('\n[2б] Ставка без минимальной цены');
+const g2b = new Game('ANY');
 g2b.addPlayer('a', 'Аня');
 g2b.addPlayer('b', 'Борис');
 g2b.start();
 for (const p of g2b.players) p.money = 5000;
 const pileValue = g2b.state.currentPile._value;
-// Ставим заведомо ниже минимальной цены: порог считается от настоящей суммы,
-// поэтому половины от неё заведомо хватает.
-const lowBid = Math.max(RULES.minStep, Math.floor(pileValue * RULES.reserveRatio / 2 / RULES.minStep) * RULES.minStep);
+// Ставим копейку: минимальной цены нет, поэтому лот должен достаться кому угодно.
+const lowBid = RULES.minStep;
 const openedLow = g2b.raise('a', lowBid);
-check('низкая ставка принимается в торгах', openedLow.ok, JSON.stringify(openedLow));
-check('ставка ниже минимальной цены', lowBid < Math.round(pileValue * RULES.reserveRatio),
-  `${lowBid} против ${Math.round(pileValue * RULES.reserveRatio)}`);
+check('минимальная ставка принимается в торгах', openedLow.ok, JSON.stringify(openedLow));
 g2b.closeBidding();
 const lowRev = g2b.publicState();
-check('кладовка ниже минимальной не продана', lowRev.pile.void === true, String(lowRev.pile.void));
-check('цена невыкупленной кладовки не раскрыта', lowRev.pile.value === null, String(lowRev.pile.value));
-check('состав невыкупленной кладовки не раскрыт', lowRev.pile.items.length === 0);
-check('ставка возвращена полностью',
-  g2b.state.players.get('a').money === 5000,
-  String(g2b.state.players.get('a').money));
-check('заморозка закрыта', g2b.state.players.get('a').held === 0);
+// Если лот дороже ставки, игрок в прибыли; если дешевле — в минусе. Итог один:
+// кладовка досталась лидеру независимо от суммы.
+check('лот достался лидеру последней ставки', lowRev.pile.winner === 'Аня', String(lowRev.pile.winner));
+check('победил по последней ставке', lowRev.pile.winnerBid === lowBid, String(lowRev.pile.winnerBid));
+check('цена кладовки раскрыта в разборе', typeof lowRev.pile.value === 'number');
+check('состав кладовки раскрыт в разборе', lowRev.pile.items.length > 0);
+check('заморозка закрыта', g2b.state.players.get('a').held === 0, String(g2b.state.players.get('a').held));
+// Деньги = 5000 - ставка + сумма кладовки. Дохода в этой сумме нет: start() уже
+// начислил его, а мы после этого переписали капитал в 5000.
+check('итог: находка минус ставка',
+  g2b.state.players.get('a').money === 5000 - lowBid + pileValue,
+  `${g2b.state.players.get('a').money}, ожидали ${5000 - lowBid + pileValue}`);
 g2b.destroy();
 
 // ── 3. Старт невозможен без игроков ───────────────────────────────────
@@ -419,11 +413,12 @@ const secretBefore = g4.secret;
 g4.state.players.get('h').money = 5000;
 g4.state.players.get('h').won.push({ round: 0, value: 500, bid: 100 });
 g4.start();
-// Ставим выше минимальной цены, иначе лот не продастся и начисления не будет.
-const g4bid = Math.ceil(g4.state.currentPile._value * 0.8 / RULES.minStep) * RULES.minStep;
+// Ставим 80% капитала: сумма лота случайна, а лимит ставки — 90%, поэтому
+// проверка начислений не должна зависеть от того, дорогой лот выпал или нет.
+const g4bid = Math.ceil(5000 * RULES.maxBidRatio / RULES.minStep) * RULES.minStep;
 check('ставка реванша принята', g4.raise('h', g4bid).ok, String(g4bid));
 g4.closeBidding();
-check('лот реванша продан', g4.state.currentPile._void === false);
+check('лот реванша продан', !!g4.state.currentPile._winner, String(g4.state.currentPile._winner));
 // Ставка заморожена при постановке, находка пришла при разборе:
 // 5000 + доход - плата за лот + находка. Никто ставку не перебивал, поэтому
 // сгоревших разниц нет вовсе: burned растёт только на перебитиях.
@@ -460,32 +455,8 @@ check('в снимке нет secret', !raw.includes(g5.secret));
 check('в снимке нет суммы кладовки', !raw.includes(`"value":${g5.state.currentPile._value}`));
 check('в снимке нет _value', !raw.includes('_value'));
 check('publicPile без цен', !JSON.stringify(publicPile(g5.state.currentPile)).includes('_'));
-// Минимальная цена держится в секрете: знать её долю — значит уметь переводить
-// оценку завала в «продастся или нет» и бить точно в порог. Проверяем поля, а
-// не подстроку в JSON: число порога совпадает с чьим-то капиталом или ставкой
-// примерно в одной лоте из двадцати, и такая проверка мигает без причины.
 const snap = g5.publicState();
-const secretKeys = Object.keys(snap.pile).filter((k) => /reserve|min|threshold|minbid/i.test(k));
-check('в снимке нет полей минимальной цены', secretKeys.length === 0, secretKeys.join(','));
 check('в снимке видны заморозка и сгоревшее', snap.players.every((p) => typeof p.held === 'number' && typeof p.burned === 'number'));
-// Порог обязан быть достижим: иначе «ниже минимальной цены» приходит в ответ на
-// максимально возможную ставку, и игрока обвиняют в неудачной оценке, хотя он
-// физически не мог доплатить. Проверяем первые раунды на свежем капитале.
-{
-  let unreachable = 0;
-  const probeRounds = 60;
-  for (let k = 0; k < probeRounds; k++) {
-    const gp = new Game('CAP' + k);
-    gp.addPlayer('x', 'Ксю');
-    gp.addPlayer('y', 'Юля');
-    gp.start();
-    const cap = Math.floor(RULES.startMoney * RULES.maxBidRatio);
-    if (gp.reserveFor(gp.state.currentPile) > cap) unreachable++;
-    gp.destroy();
-  }
-  check('в 1-м раунде нет недоступных лотов', unreachable === 0,
-    `${unreachable} из ${probeRounds}`);
-}
 g5.destroy();
 
 console.log(failures === 0 ? '\nВсе проверки пройдены.\n' : `\nПровалено проверок: ${failures}\n`);
