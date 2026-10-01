@@ -211,11 +211,15 @@ check('есть таймер фазы', a.state.phaseMs > 0, String(a.state.phas
 check('таймер торгов — 20 секунд', a.state.phaseMs === 20000, String(a.state.phaseMs));
 check('у обоих одинаковая кладовка',
   JSON.stringify(a.state.pile.items) === JSON.stringify(b.state.pile.items));
-check('доход начислен', a.state.players.every((p) => p.money === 1000 + 50));
+// Стартовый капитал и доход берём из снимка, а не константами: баланс
+// настраивают в src/game.js, и зашитые здесь числа однажды разъедутся.
+const { startMoney, incomePerRound } = a.state.rules;
+check('доход начислен', a.state.players.every((p) => p.money === startMoney + incomePerRound),
+  `ожидали ${startMoney + incomePerRound}, получили ${a.state.players.map((p) => p.money).join(', ')}`);
 check('таймер в будущем', a.state.timerEndsAt > Date.now());
 
 // Человек со второй вкладкой не должен вскакивать в партию на середине:
-// новое место приходит со стартовыми 1000 монетами и без выигрышей.
+// новое место приходит со стартовым капиталом и без выигрышей.
 const latecomer = new Client('Латекомер');
 await latecomer.open();
 const late = await latecomer.emit('join', { name: 'Латекомер', code });

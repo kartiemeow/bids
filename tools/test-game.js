@@ -461,13 +461,31 @@ check('в снимке нет суммы кладовки', !raw.includes(`"valu
 check('в снимке нет _value', !raw.includes('_value'));
 check('publicPile без цен', !JSON.stringify(publicPile(g5.state.currentPile)).includes('_'));
 // Минимальная цена держится в секрете: знать её долю — значит уметь переводить
-// оценку завала в «продастся или нет» и бить точно в порог. Саму оценку
-// снимок по-прежнему не отдаёт, поэтому проверяем именно отсутствие полей.
+// оценку завала в «продастся или нет» и бить точно в порог. Проверяем поля, а
+// не подстроку в JSON: число порога совпадает с чьим-то капиталом или ставкой
+// примерно в одной лоте из двадцати, и такая проверка мигает без причины.
 const snap = g5.publicState();
-check('в снимке нет минимальной цены', snap.pile.reserve === undefined && snap.pile.minBid === undefined);
-check('в снимке нет минимальной цены у лота',
-  !raw.includes(String(Math.round(g5.state.currentPile._value * RULES.reserveRatio))));
+const secretKeys = Object.keys(snap.pile).filter((k) => /reserve|min|threshold|minbid/i.test(k));
+check('в снимке нет полей минимальной цены', secretKeys.length === 0, secretKeys.join(','));
 check('в снимке видны заморозка и сгоревшее', snap.players.every((p) => typeof p.held === 'number' && typeof p.burned === 'number'));
+// Порог обязан быть достижим: иначе «ниже минимальной цены» приходит в ответ на
+// максимально возможную ставку, и игрока обвиняют в неудачной оценке, хотя он
+// физически не мог доплатить. Проверяем первые раунды на свежем капитале.
+{
+  let unreachable = 0;
+  const probeRounds = 60;
+  for (let k = 0; k < probeRounds; k++) {
+    const gp = new Game('CAP' + k);
+    gp.addPlayer('x', 'Ксю');
+    gp.addPlayer('y', 'Юля');
+    gp.start();
+    const cap = Math.floor(RULES.startMoney * RULES.maxBidRatio);
+    if (gp.reserveFor(gp.state.currentPile) > cap) unreachable++;
+    gp.destroy();
+  }
+  check('в 1-м раунде нет недоступных лотов', unreachable === 0,
+    `${unreachable} из ${probeRounds}`);
+}
 g5.destroy();
 
 console.log(failures === 0 ? '\nВсе проверки пройдены.\n' : `\nПровалено проверок: ${failures}\n`);
