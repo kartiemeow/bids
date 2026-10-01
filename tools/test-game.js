@@ -226,9 +226,8 @@ check('нулевая ставка отклонена', !zero.ok, JSON.stringify
 
 // Первая ставка открывает аукцион и сразу замораживается. Ставим осмысленную
 // сумму: проверки ниже сверяют цену кладовки с начислением, и копеечная ставка
-// тут ничего не проверяла бы. Потолок общий и не зависит от капитала, поэтому
-// под него надо уместить ещё и перебития: оставляем запас в несколько шагов,
-// иначе сервер откажет на первом же перебитии и проверка не дойдёт до сути.
+// тут ничего не проверяла бы. Ниже потолка надо оставить запас на несколько
+// перебитий, иначе сервер откажет на первом же и проверка не дойдёт до сути.
 const worth = g2.state.currentPile._value;
 const headroom = RULES.minStep * 5;
 const openBid = Math.min(
@@ -302,12 +301,14 @@ check('итог: находка минус ставка',
   `${g2b.state.players.get('a').money}, ожидали ${5000 - lowBid + pileValue}`);
 g2b.destroy();
 
-// ── 2в. Общая крыша ставки и перевес ──────────────────────────────────
+// ── 2в. Потолка ставки нет, перевес есть ──────────────────────────────
 
-// Проверяем правила, которые ломают снежный комок. Без них лидер с большим
-// капиталом перебивает всех ровно на монету над их потолком и забирает лот
-// дёшево: крыша одна на всех, перебить её можно только заплатив больше неё.
-console.log('\n[2в] Общая крыша ставки и перевес');
+// Потолок — это всё, что на руке. Общей крыши больше нет: она обесценивала
+// «сокровище» (2400 монет можно было выкупить за 800), и за лот теперь платят
+// его цену. Плата за это — деньги снова дают преимущество в торге, лидер с
+// большим капиталом перебивает всех ровно на монету над их потолком. Против
+// этого остался перевес (ниже), и только он.
+console.log('\n[2в] Потолок ставки и перевес');
 const g2c = new Game('CAPS');
 g2c.addPlayer('rich', 'Богач');
 g2c.addPlayer('poor', 'Бедняк');
@@ -316,24 +317,41 @@ g2c.state.players.get('poor').money = 600;
 const g2cRich = g2c.state.players.get('rich');
 const g2cPoor = g2c.state.players.get('poor');
 // Потолок считаем ДО старта: он не зависит от фазы, а после старта приходит
-// доход и перевес, и бедный успевает подняться к общей крыше.
-check('крыша не зависит от капитала',
-  g2c.bidCapFor(g2cRich) === RULES.bidCap, String(g2c.bidCapFor(g2cRich)));
-check('у бедного крыша своя, по его деньгам',
-  g2c.bidCapFor(g2cPoor) === Math.floor(600 * RULES.maxBidRatio),
-  String(g2c.bidCapFor(g2cPoor)));
-g2c.start();
-const g2cOver = g2c.raise('rich', RULES.bidCap + RULES.minStep);
-check('выше общей крыши нельзя даже с полным карманом', !g2cOver.ok, JSON.stringify(g2cOver));
-check('в отказе назван общий потолок',
-  g2cOver.error && g2cOver.error.includes(String(RULES.bidCap)), String(g2cOver.error));
+// доход, и сумма на руке перестаёт совпадать с выставленной.
+check('потолок — это весь капитал, и только он',
+  g2c.bidCapFor(g2cRich) === 20000 && g2c.bidCapFor(g2cPoor) === 600,
+  `${g2c.bidCapFor(g2cRich)} / ${g2c.bidCapFor(g2cPoor)}`);
+check('в правилах нет ни крыши, ни доли капитала',
+  RULES.bidCap === undefined && RULES.maxBidRatio === undefined,
+  `bidCap=${RULES.bidCap}, maxBidRatio=${RULES.maxBidRatio}`);
 
-// Grief-стратегия: лидер бьёт на монету выше потолка соперника. Общая крыша
-// обрывает её по построению — перебить можно только выше крыши, а крыша одна.
-check('крышу можно поставить ровно', g2c.raise('rich', RULES.bidCap).ok);
-check('бедный не может перебить крышу',
-  !g2c.raise('poor', RULES.bidCap + RULES.minStep).ok);
+// 1500 — выше прежней общей крыши в 800. Раньше такая ставка была отказом.
+g2c.start();
+check('ставка выше прежней крыши принимается', g2c.raise('rich', 1500).ok);
+const g2cCap = g2c.bidCapFor(g2cRich);
+check('потолок лидера равен его деньгам', g2cCap === g2cRich.money, `${g2cCap} / ${g2cRich.money}`);
+// Бедный лезет выше потолка богатого. Отказ приходит по деньгам, а не по
+// правилу, и называет сумму, до которой бедный дотянуть может.
+const g2cOver = g2c.raise('poor', g2cCap + RULES.minStep);
+check('выше своего капитала поставить нельзя', !g2cOver.ok, JSON.stringify(g2cOver));
+check('в отказе назван предел соперника, а не «крыша 800»',
+  !!g2cOver.error && !g2cOver.error.includes('800'), String(g2cOver.error));
+check('в отказе назван собственный предел отказываемого',
+  !!g2cOver.error && g2cOver.error.includes(String(g2c.bidCapFor(g2cPoor))), String(g2cOver.error));
 g2c.destroy();
+
+// Ставка-всё: игрок может поставить ровно весь капитал и обнулиться.
+const g2e = new Game('ALLIN');
+g2e.addPlayer('p', 'Бедняк');
+g2e.addPlayer('q', 'Сосед');
+g2e.state.players.get('p').money = 400;
+g2e.start();
+const g2eP = g2e.state.players.get('p');
+const g2eCap = g2e.bidCapFor(g2eP);
+check('ставка-всё принимается', g2e.raise('p', g2eCap).ok, String(g2eCap));
+check('после ставки-всё денег нет, а ставка заморожена',
+  g2eP.money === 0 && g2eP.held === g2eCap, `${g2eP.money} / ${g2eP.held}`);
+g2e.destroy();
 
 // Перевес: деньги перекладываются от вышедших к отставшим, комната не чеканит.
 const g2d = new Game('LEVY');
@@ -498,10 +516,12 @@ const secretBefore = g4.secret;
 g4.state.players.get('h').money = 5000;
 g4.state.players.get('h').won.push({ round: 0, value: 500, bid: 100 });
 g4.start();
-// Ставим 80% капитала: сумма лота случайна, а лимит ставки — 90% капитала и
-// общая крыша bidCap, поэтому проверка начислений не должна зависеть от того,
-// дорогой лот выпал или нет.
-const g4bid = Math.ceil(Math.min(5000 * RULES.maxBidRatio, RULES.bidCap) / RULES.minStep) * RULES.minStep;
+// Ставим 80% капитала: сумма лота случайна, а потолок — это весь капитал, и
+// проверка начислений не должна зависеть от того, дорогой лот выпал или нет.
+// Сумму берём у сервера, а не пересчитываем: правило потолка уже менялось
+// трижды, и зашитая в тест арифметика каждый раз устаревала первой.
+const hMoneyNow = g4.state.players.get('h').money;
+const g4bid = Math.ceil(hMoneyNow * 0.8 / RULES.minStep) * RULES.minStep;
 check('ставка реванша принята', g4.raise('h', g4bid).ok, String(g4bid));
 g4.closeBidding();
 check('лот реванша продан', !!g4.state.currentPile._winner, String(g4.state.currentPile._winner));
@@ -512,7 +532,9 @@ check('лот реванша продан', !!g4.state.currentPile._winner, Stri
 // перевес он отдаёт, и это надо учесть отдельно.
 const h = g4.state.players.get('h');
 const lastWin = h.won[h.won.length - 1];
-const hExpect = 5000 + RULES.incomePerRound - g4bid + lastWin.value + h.received - h.levied;
+// hMoneyNow снят ПОСЛЕ старта, а старт уже провёл перевес и выдал доход, —
+// поэтому levied в формуле не вычитается второй раз: он уже внутри hMoneyNow.
+const hExpect = hMoneyNow - g4bid + lastWin.value + h.received;
 check('победителю начислена сумма находки', h.money === hExpect,
   `${h.money}, ожидали ${hExpect}`);
 check('выигранная ставка не сгорела', h.burned === 0, String(h.burned));

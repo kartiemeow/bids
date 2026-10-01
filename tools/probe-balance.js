@@ -6,8 +6,9 @@
 //
 // Один лидер играет «grief»: он видит деньги всех и бьёт ровно на монету выше
 // потолка того, кто сейчас ведёт. Лот гарантирован, переплата копеечная,
-// оценка завала не нужна. Пока это работает, никакие правила про разрыв
-// капиталов не имеют смысла, и зонд честно показывает, работает ли ещё.
+// оценка завала не нужна. Снятый потолок и перевес — единственное, что стоит
+// между лидером и этим приёмом, и зонд честно показывает, чего стоит перевес:
+// сжимает ли он разрыв сам по себе.
 //
 //   node tools/probe-balance.js
 
@@ -44,8 +45,8 @@ function play(seed) {
     }
 
     // Ходят по очереди. Лидер, который вырвался, применяет grief: бьёт на
-    // монету выше потолка второго места. Обычно он упирается в общую крышу,
-    // и это ровно то, что мы хотим проверить.
+    // монету выше потолка второго места. Потолок — это деньги соперника, так
+    // что отбить такой бросок может только отсутствие денег у лидера.
     for (const p of g.players) {
       if (!p.connected) continue;
       const cap = g.bidCapFor(p);
@@ -53,14 +54,14 @@ function play(seed) {
       if (floorBid > cap) continue;
       let est = Math.max(RULES.minStep, Math.round(seen * (1 + gauss() * 0.7)));
       // Grief: лидер по деньгам бьёт ровно на монету выше потолка того, кто
-      // сейчас ведёт. Считаем отдельно, сколько таких ставок сервер отбил
-      // общей крышей — именно это и есть доказательство, что правило работает.
+      // сейчас ведёт. Считаем отдельно, сколько таких ставок сервер отбил,
+      // и сколько прошло — это и есть цена снятого потолка.
       const isFrontrunner = p.money === Math.max(...g.players.map((q) => q.money));
       let griefing = false;
       if (isFrontrunner && g.state.highBidder !== null && g.state.highBidder !== p.id) {
         // Второе место считаем среди ОСТАВШИХСЯ: сам лидер в этой выборке
-        // оказывался первым и «перебивал сам себя», что давало ложное
-        // «крыша всё отбила» даже при крыше в бесконечность.
+        // оказывался первым и «перебивал сам себя», что засчитывалось
+        // как успешный grief по счётчику, хотя лот он не выигрывал.
         const second = g.players.filter((q) => q.id !== g.state.highBidder && q.id !== p.id)
           .sort((a, b) => b.money - a.money)[0];
         if (!second) continue;
@@ -106,12 +107,12 @@ for (let i = 1; i <= GAMES; i++) {
 const med = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
 const p90 = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length * 0.9)]; };
 
-// Один и тот же зонд на одних и тех же партиях, но со старыми правилами:
-// крыша убрана в бесконечность, перевес выключен. Разница — ровно то, что
-// сделали новые правила, без оглядки на то, как игроки ходят.
-function run(label, cap, levy) {
-  const oldCap = RULES.bidCap; const oldLevy = RULES.levyRate;
-  RULES.bidCap = cap; RULES.levyRate = levy;
+// Один и тот же зонд на одних и тех же партиях, но с перевесом выключенным —
+// то есть ровно те правила, что были до антиснежного коммита. Потолка ставки
+// нет ни там, ни тут: единственный переключатель сейчас перевес.
+function run(label, levy) {
+  const oldLevy = RULES.levyRate;
+  RULES.levyRate = levy;
   const a = { spreads: [], blind: [], lots: 0, outsider: 0, backWins: 0, griefUsed: 0, griefWin: 0, blocked: 0 };
   for (let i = 1; i <= GAMES; i++) {
     const r = play(i);
@@ -119,16 +120,16 @@ function run(label, cap, levy) {
     a.lots += r.lots; a.outsider += r.outsider; a.backWins += r.backWins;
     a.griefUsed += r.griefUsed; a.griefWin += r.griefWin; a.blocked += r.blocked;
   }
-  RULES.bidCap = oldCap; RULES.levyRate = oldLevy;
+  RULES.levyRate = oldLevy;
   console.log(label);
   console.log(`   разрыв капиталов   медиана ${med(a.spreads)}, p90 ${p90(a.spreads)}`);
-  console.log(`   отрезан в поздних  ${Math.round(med(a.blind) * 100)}% раундов`);
+  console.log(`   беднейший не вытянет дорогой лот  ${Math.round(med(a.blind) * 100)}% поздних раундов`);
   console.log(`   лот не лидеру      ${Math.round(a.outsider / a.lots * 100)}%`);
   console.log(`   лот последнему     ${Math.round(a.backWins / a.lots * 100)}%`);
-  console.log(`   grief              пробовали ${a.griefUsed}, прошло ${a.griefWin}, отбито крышей ${a.blocked}\n`);
+  console.log(`   grief              пробовали ${a.griefUsed}, прошло ${a.griefWin}, отбито деньгами ${a.blocked}\n`);
 }
 
 console.log(`Настоящая игра, ${N} игроков, ${RULES.totalRounds} раундов, ${GAMES} партий`);
-console.log(`старт ${RULES.startMoney}, доход ${RULES.incomePerRound}\n`);
-run('БЫЛО: потолок от своего капитала, без перевеса', 1e9, 0);
-run(`СТАЛО: крыша ${RULES.bidCap}, перевес ${RULES.levyRate}`, RULES.bidCap, RULES.levyRate);
+console.log(`старт ${RULES.startMoney}, доход ${RULES.incomePerRound}, потолок ставки — только капитал\n`);
+run('БЕЗ ПЕРЕВЕСА (правила до антиснежного коммита)', 0);
+run(`С ПЕРЕВЕСОМ ${RULES.levyRate} (текущие правила)`, RULES.levyRate);

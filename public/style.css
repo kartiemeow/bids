@@ -310,8 +310,8 @@ body {
 /* Приборные выводы под сценой — только реальные значения состояния. */
 .readout {
   display: grid;
-  /* auto-fit, а не три колонки: в приборе стало четыре показателя, и жёсткая
-     тройка отправляла последний на вторую строку с пустой ячейкой. */
+  /* auto-fit, а не жёсткая тройка: на телефоне «макс ставка» и «секунд»
+     впритык, и жёсткие колонки отправляли подпись на вторую строку. */
   grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: var(--space-2xs);
   padding: var(--space-xs) var(--gutter) var(--space-sm);
@@ -325,12 +325,6 @@ body {
   color: var(--color-ink);
   letter-spacing: -0.01em;
 }
-/* Подпись ограничения — слово, а не число, поэтому на строчку ниже. */
-#q-maxnote {
-  font-size: var(--text-xs);
-  color: var(--color-muted);
-  line-height: 1.2;
-}
 
 /* Разбор кладовки: список «картинка — цена», от дорогой к дешёвой. */
 .items {
@@ -340,6 +334,8 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3xs) var(--space-2xs);
+  /* Список разбора пересобирается целиком при каждом снимке — см. .players. */
+  overflow-anchor: none;
 }
 .items li {
   display: grid;
@@ -438,7 +434,12 @@ body {
 
 /* ── Списки игроков ──────────────────────────────────────────────────── */
 
-.players { list-style: none; margin: 0 0 var(--space-md); padding: 0; display: grid; gap: 2px; }
+/* overflow-anchor: none обязателен на списках, которые клиент перерисовывает
+   целиком на каждом снимке. Без него браузер пытается удержать на месте
+   элемент, на котором смотришь, и при перестановке строк (а строки ещё и
+   меняют высоту, когда появляется пометка «перевёл») подкручивает прокрутку
+   сам. Выглядит это как страница прыгает вверх-вниз вслед за каждой ставкой. */
+.players { list-style: none; margin: 0 0 var(--space-md); padding: 0; display: grid; gap: 2px; overflow-anchor: none; }
 .player {
   display: flex;
   align-items: center;
