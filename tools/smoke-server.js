@@ -39,8 +39,12 @@ function parsePackets(text) {
 }
 
 class Client {
-  constructor(name) {
+  // pid — это личность игрока. Сервер берёт его из handshake вместо id сокета,
+  // и только он переживает перезагрузку страницы. Без него тест не может
+  // отличить перезагрузку от нового игрока.
+  constructor(name, pid) {
     this.name = name;
+    this.pid = pid;
     this.sid = null;
     this.ackId = 0;
     this.state = null;
@@ -54,7 +58,9 @@ class Client {
     const open = packets.map((p) => JSON.parse(p.slice(1))).find((x) => x.sid);
     if (!open) throw new Error('нет open-пакета: ' + JSON.stringify(packets));
     this.sid = open.sid;
-    await this.post('40'); // CONNECT к пространству имён по умолчанию
+    // 40 — CONNECT к пространству имён по умолчанию, после него может идти
+    // JSON с handshake-данными: именно там клиент передаёт свой pid.
+    await this.post(this.pid ? `40${JSON.stringify({ pid: this.pid })}` : '40');
     this.pump();
   }
 
@@ -126,6 +132,13 @@ class Client {
   close() {
     this.open = false;
     this.post('41').catch(() => {});
+  }
+
+  // Обрыв без прощания — то, что делает перезагрузка страницы. Отличается от
+  // close() тем, что сервер узнаёт о нём сразу, а не по истечении ping-таймаута.
+  kill() {
+    this.open = false;
+    this.post('1').catch(() => {});
   }
 }
 
@@ -199,6 +212,19 @@ check('в лобби кладовки нет', a.state.pile === null);
 console.log('\n[4] Старт игры');
 const early = await b.emit('start', {});
 check('не-хост не может стартовать', !!(early && early.error), JSON.stringify(early));
+
+// Старт требует готовности всех. Проверяем через сокет, а не через Game:
+// важно, что сервер отказывает и называет причину, — по этому тексту хост
+// понимает, кого он ждёт.
+const notReady = await a.emit('start', {});
+check('без готовности хост не стартует',
+  !!(notReady && notReady.error) && notReady.error.includes('не готовы'), JSON.stringify(notReady));
+await a.emit('ready', { ready: true });
+const halfReady = await a.emit('start', {});
+check('одного готового не хватает',
+  !!(halfReady && halfReady.error) && halfReady.error.includes('Борис'), JSON.stringify(halfReady));
+await b.emit('ready', { ready: true });
+await a.waitState((s) => s.players.every((p) => p.ready));
 
 const started = await a.emit('start', {});
 check('хост стартовал', started && started.ok, JSON.stringify(started));
@@ -408,6 +434,70 @@ await y.emit('ready', { ready: true });
 await sleep(200);
 check('явный флаг по-прежнему работает', readyOf(y).ready === true);
 y.close(); x.close();
+
+// ── Перезагрузка страницы посреди партии ──────────────────────────────
+
+console.log('\n[8] Перезагрузка возвращает в партию');
+
+// Главный баг: личность игрока была id сокета, а он новый после F5. Перезагрузившийся
+// получал отказ «игра уже началась» и терял капитал вместе с партией. Теперь pid живёт
+// в sessionStorage и переживает перезагрузку — проверяем это через настоящий обрыв
+// сокета и вход с тем же pid.
+const pidA = 'pReloadTestA0001';
+const pidB = 'pReloadTestB0002';
+const pidC = 'pReloadTestC0003';
+const re = new Client('Аня', pidA);
+const rf = new Client('Борис', pidB);
+await re.open();
+await rf.open();
+const madeRel = await re.emit('create', { name: 'Аня' });
+check('комната создана', madeRel && madeRel.ok, JSON.stringify(madeRel));
+const relCode = madeRel && madeRel.code;
+check('сервер отдал код комнаты в ответе', !!relCode, JSON.stringify(madeRel));
+await rf.emit('join', { code: relCode, name: 'Борис' });
+await re.waitState((s) => s.players.length === 2);
+await re.emit('ready', { ready: true });
+await rf.emit('ready', { ready: true });
+await re.emit('start', {});
+await re.waitState((s) => s.phase === 'bid');
+
+const beforeReload = re.state.players.find((p) => p.name === 'Аня');
+const moneyBefore = beforeReload.money;
+
+// Ставок не делаем: обрыв лидера обнуляет кладовку, и проверяли бы мы не
+// перезагрузку, а отмену лота.
+re.kill();
+await rf.waitState((s) => s.players.some((p) => p.name === 'Аня' && !p.connected));
+check('после обрыва Аня помечена отключённой',
+  !!rf.state.players.find((p) => p.name === 'Аня' && !p.connected));
+check('Борис продолжает видеть партию', rf.state.phase === 'bid' && rf.state.round === 1);
+
+// Новая вкладка — тот же pid. Это ровно то, что делает перезагрузка страницы.
+const re2 = new Client('Аня', pidA);
+await re2.open();
+const back = await re2.emit('join', { code: relCode, name: 'Аня' });
+check('перезагрузившийся вернулся в партию', back && back.ok, JSON.stringify(back));
+await re2.waitState((s) => s.phase === 'bid');
+const afterReload = re2.state.players.find((p) => p.name === 'Аня');
+check('не дубль, а тот же игрок',
+  !!afterReload && afterReload.id === beforeReload.id,
+  `${afterReload && afterReload.id} против ${beforeReload.id}`);
+check('снова считается подключённым', afterReload.connected === true);
+check('капитал уцелел', afterReload.money === moneyBefore,
+  `${afterReload.money}, было ${moneyBefore}`);
+check('попадаем в партию, а не в лобби', re2.state.phase === 'bid' && re2.state.round === 1);
+check('Борис видит Аню на месте', !!rf.state.players.find((p) => p.name === 'Аня' && p.connected));
+
+// Чужой pid в разгаданную партию по-прежнему не пускаем: вход на середине дал бы
+// бесплатный сброс капитала, и защита от этого обязана была уцелеть.
+const rc = new Client('Новый', pidC);
+await rc.open();
+const stranger = await rc.emit('join', { code: relCode, name: 'Новый' });
+check('чужой в разгаданную партию не пускает',
+  !!(stranger && stranger.error), JSON.stringify(stranger));
+
+re2.close(); rf.close(); rc.close();
+await sleep(100);
 
 a.close(); b.close();
 await sleep(100);

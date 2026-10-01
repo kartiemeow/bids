@@ -98,8 +98,16 @@ export class Game {
 
   // ── Игроки ────────────────────────────────────────────────────────────
 
+  // Возвращает игрока по id. Повторный вызов с тем же id — это переподключение
+  // после перезагрузки страницы, а не новый игрок: деньги, история и готовность
+  // сохраняются, а connected возвращается в true. Без этого перезагрузившийся
+  // формально вернулся в комнату, но оставался для всех «вышедшим».
   addPlayer(id, name) {
-    if (this.state.players.has(id)) return this.state.players.get(id);
+    const back = this.state.players.get(id);
+    if (back) {
+      back.connected = true;
+      return back;
+    }
     const p = {
       id,
       name: String(name || 'Игрок').slice(0, 18),
@@ -158,10 +166,15 @@ export class Game {
     }
   }
 
+  // Готовность — это согласие начать, а не украшение лобби. Ставится только в
+  // лобби: в разгаданной партии кнопка «не готов» означала бы отмену участия,
+  // а партия уже идёт.
   setReady(id, ready) {
     const p = this.state.players.get(id);
-    if (!p) return;
+    if (!p) return { ok: false, error: 'Игрок не найден' };
+    if (this.state.phase !== PHASES.LOBBY) return { ok: false, error: 'Готовность — только в лобби' };
     p.ready = !!ready;
+    return { ok: true };
   }
 
   isReady(id) {
@@ -169,10 +182,31 @@ export class Game {
     return !!(p && p.ready);
   }
 
-  // Хост стартует, когда собралось достаточно игроков.
+  get online() {
+    return this.players.filter((p) => p.connected);
+  }
+
+  // Хост стартует, когда собралось достаточно игроков И все, кто сейчас в
+  // комнате, нажали «готов». Раньше готовность не влияла ни на что: игрок
+  // нажимал кнопку и видел, что на старт она не влияет.
   canStart() {
-    const online = this.players.filter((p) => p.connected);
-    return online.length >= RULES.minPlayers;
+    const online = this.online;
+    return online.length >= RULES.minPlayers && online.every((p) => p.ready);
+  }
+
+  // Почему старт невозможен — одной строкой для кнопки хоста и для отказа
+  // сервера. Считать это на клиенте нельзя: правило менялось, и клиент обязан
+  // показывать ровно то, что думает сервер.
+  startBlock() {
+    const online = this.online;
+    if (online.length < RULES.minPlayers) {
+      return `нужно ещё ${RULES.minPlayers - online.length} игрока`;
+    }
+    const waiting = online.filter((p) => !p.ready);
+    if (waiting.length) {
+      return `не готовы: ${waiting.map((p) => p.name).join(', ')}`;
+    }
+    return '';
   }
 
   // ── Управление раундом ────────────────────────────────────────────────
@@ -579,8 +613,11 @@ export class Game {
       p.won = [];
       p.spent = 0;
       p.burned = 0;
+      // Готовность сбрасываем, а connected — нет. Раньше здесь стояло
+      // connected = true для всех, и это ломало реванш насмерть: ушедшего
+      // игрока оживляли, он не мог нажать «готов» (сокета нет), а хост видел
+      // его как «ждёт». Со всеми готовыми старт становился невозможен навсегда.
       p.ready = false;
-      p.connected = true;
     }
     this.log('Реванш: лоты перемешаны заново, деньги сброшены.');
     this.onChange();

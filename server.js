@@ -80,35 +80,50 @@ function broadcast(room) {
   io.to(room.code).emit('state', room.publicState());
 }
 
+// Личность игрока переживает перезагрузку страницы. Идентификатор сокета для
+// этого не годится: после F5 он новый, поэтому перезагрузившийся получал нового
+// игрока, не мог вернуться в партию («игра уже началась») и терял капитал.
+// Клиент держит свой токен в sessionStorage и присылает его при подключении;
+// сервер берёт его как pid, а id сокета — только запасной вариант.
+const PID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+function pidFrom(socket) {
+  const clean = String((socket.handshake.auth && socket.handshake.auth.pid) || '');
+  return PID_RE.test(clean) ? clean : socket.id;
+}
+
 // Вход в существующую комнату. Комната обязана уже существовать: иначе
 // опечатка в коде молча создавала бы новую пустую комнату.
 function enterRoom(socket, room, name, cb) {
-  // Заходить в начавшуюся игру нельзя. Новое место получает 1000 монет и пустую
-  // историю выигрышей, так что вход на середине — это бесплатный сброс капитала
-  // (и дубль игрока, если кто-то перезагрузил страницу посреди раунда).
-  // Своего игрока опознаём по id сокета: переподключившийся без смены id
-  // попадать обратно в партию должен.
-  const mine = room.state.players.get(socket.data.pid);
-  if (!mine && room.state.phase !== PHASES.LOBBY) {
+  // Заходить на начавшуюся игру нельзя: новое место получает стартовые деньги
+  // и пустую историю выигрышей, то есть вход на середине — это бесплатный сброс
+  // капитала. Своего игрока опознаём по pid, а не по id сокета: тот после F5
+  // новый, и перезагрузившийся обязан вернуться в партию со своим капиталом и
+  // историей. Полноту комнаты считаем по подключённым, а не по всем записи:
+  // ушедший иначе продолжает занимать место, которого уже нет.
+  const known = room.state.players.get(socket.data.pid);
+  if (!known && room.state.phase !== PHASES.LOBBY) {
     return cb && cb({ error: 'Игра уже началась — дождись её конца' });
   }
-  if (room.players.length >= RULES.maxPlayers && !mine) {
+  if (!known && room.online.length >= RULES.maxPlayers) {
     return cb && cb({ error: 'Комната заполнена' });
   }
   // Смена комнаты: из прежней надо выйти, иначе игрок остаётся в чужой игре.
-  if (socket.data.room && socket.data.room !== room.code) leaveRoom(socket);
+  if (socket.data.room && socket.data.room !== room.code) leaveRoom(socket, true);
 
   const p = room.addPlayer(socket.data.pid, name);
   socket.join(room.code);
   socket.data.room = room.code;
-  room.log(`${p.name} в комнате.`);
+  // О новом игроке пишем в лог, о переподключении — нет: иначе F5 писал бы в лог
+  // «вышел», а через секунду «вернулся», и по логу нельзя отличить обрыв связи
+  // от ухода.
+  if (!known) room.log(`${p.name} в комнате.`);
   broadcast(room);
   // Наружу отдаём только факт успеха: сам Game содержит secret, по которому
   // считаются цены всех лотов, отдавать его клиенту нельзя.
-  return cb && cb({ ok: true });
+  return cb && cb({ ok: true, code: room.code });
 }
 
-function leaveRoom(socket) {
+function leaveRoom(socket, quiet) {
   const code = socket.data.room;
   if (!code) return;
   const room = rooms.get(code);
@@ -118,7 +133,7 @@ function leaveRoom(socket) {
 
   const p = room.state.players.get(socket.data.pid);
   room.removePlayer(socket.data.pid);
-  if (p) room.log(`${p.name} вышел.`);
+  if (p) room.log(quiet ? `${p.name}: связь оборвалась.` : `${p.name} вышел.`);
   // Пустая комната — выбрасываем, иначе память растёт бесконечно.
   if (room.players.every((x) => !x.connected)) {
     room.destroy();
@@ -134,7 +149,7 @@ function leaveRoom(socket) {
 }
 
 io.on('connection', (socket) => {
-  socket.data.pid = socket.id;
+  socket.data.pid = pidFrom(socket);
 
   socket.on('create', ({ name } = {}, cb) => {
     const code = makeCode();
@@ -158,7 +173,8 @@ io.on('connection', (socket) => {
     const room = rooms.get(socket.data.room);
     if (!room) return cb && cb({ error: 'Комната не найдена' });
     const next = typeof ready === 'boolean' ? ready : !room.isReady(socket.data.pid);
-    room.setReady(socket.data.pid, next);
+    const res = room.setReady(socket.data.pid, next);
+    if (!res.ok) return cb && cb(res);
     broadcast(room);
     if (typeof cb === 'function') cb({ ok: true });
   });
@@ -168,7 +184,11 @@ io.on('connection', (socket) => {
     if (!room) return;
     if (room.state.hostId !== socket.data.pid) return cb && cb({ error: 'Стартует только хост' });
     if (room.state.phase !== PHASES.LOBBY) return cb && cb({ error: 'Игра уже идёт' });
-    if (!room.start()) return cb && cb({ error: `Нужно минимум ${RULES.minPlayers} игрока` });
+    // Причину отказа берём у комнаты, а не собираем здесь: кнопка хоста и отказ
+    // сервера обязаны называть одно и то же, иначе игрок жмёт «начать» и получает
+    // текст, которого на кнопке не было.
+    if (!room.canStart()) return cb && cb({ error: room.startBlock() });
+    if (!room.start()) return cb && cb({ error: room.startBlock() || 'Не удалось начать' });
     broadcast(room);
     if (cb) cb({ ok: true });
   });
@@ -198,7 +218,10 @@ io.on('connection', (socket) => {
     leaveRoom(socket);
     if (typeof cb === 'function') cb({ ok: true });
   });
-  socket.on('disconnect', () => leaveRoom(socket));
+  // quiet: обрыв связи — это не уход. Игрок сейчас вернётся (перезагрузка
+  // страницы, прыгнувшая сеть), и если писать «вышел», то в логе каждая такая
+  // перезагрузка выглядит как уход из комнаты.
+  socket.on('disconnect', () => leaveRoom(socket, true));
 });
 
 server.listen(PORT, () => {

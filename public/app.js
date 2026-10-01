@@ -2,9 +2,35 @@
 // клиент только рисует его снимки и отправляет намерения.
 
 const $ = (id) => document.getElementById(id);
-const socket = io();
 
-let me = null;        // наш id
+// Личность игрока живёт в sessionStorage, а не в id сокета. После перезагрузки
+// страницы сокет всегда новый, и раньше это означало «новый игрок»: вернуться в
+// партию было нельзя («игра уже началась»), а капитал и выигранные лоты терялись.
+// Именно sessionStorage, а не localStorage: своя вкладка должна быть своим
+// игроком, иначе дубликат вкладки займёт чужое место за столом.
+const PID_KEY = 'lotsgame.pid';
+const ROOM_KEY = 'lotsgame.room';
+
+function freshPid() {
+  return 'p' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function myPid() {
+  try {
+    let pid = sessionStorage.getItem(PID_KEY);
+    if (!pid) {
+      pid = freshPid();
+      sessionStorage.setItem(PID_KEY, pid);
+    }
+    return pid;
+  } catch (e) {
+    return freshPid(); // приватный режим: сессия не переживёт перезагрузку
+  }
+}
+
+const me = myPid();
+const socket = io({ auth: { pid: me } });
+
 let state = null;     // последний снимок
 let raf = null;
 let minBid = 1;       // минимальная ставка, которую сейчас принимает сервер
@@ -71,10 +97,17 @@ function renderLobby(st) {
 
   const iAmHost = st.hostId === me;
   const btn = $('b-start');
-  const online = st.players.filter((p) => p.connected).length;
+  const online = st.players.filter((p) => p.connected);
+  const waiting = online.filter((p) => !p.ready);
   btn.style.display = iAmHost ? '' : 'none';
-  btn.disabled = online < st.rules.minPlayers;
-  btn.textContent = iAmHost ? `Начать игру (${online})` : 'Ждём хоста';
+  btn.disabled = !!waiting.length || online.length < st.rules.minPlayers;
+  // Показываем, кого ждём, а не просто «нажмите ещё раз»: раньше кнопка
+  // «готова» ничего не меняла, потому что на старт её нажатие не влияло.
+  btn.textContent = iAmHost
+    ? (waiting.length
+      ? `не готовы: ${waiting.map((p) => p.name).join(', ')}`
+      : `Начать игру (${online.length})`)
+    : 'Ждём хоста';
 
   const rdy = $('b-ready');
   const mine = st.players.find((p) => p.id === me);
@@ -219,7 +252,13 @@ function renderOver(st) {
       <span class="sc">${p.money} <i class="coin"></i></span>`;
     ol.appendChild(li);
   });
-  $('b-again').style.display = st.hostId === me ? '' : 'none';
+  // Реванш запрашивает хост. Не-хосту раньше кнопка просто исчезала, и экран итогов
+  // оставался с одной надписью «выйти» — выглядело как зависшая игра.
+  const again = $('b-again');
+  const iAmHost = st.hostId === me;
+  again.style.display = '';
+  again.disabled = !iAmHost;
+  again.textContent = iAmHost ? 'ещё раз' : 'ждём, пока хост нажмёт «ещё раз»';
 }
 
 // ── Таймер: считаем от serverNow, чтобы не зависеть от дрейфа часов ────
@@ -241,7 +280,7 @@ function tick() {
 
 // ── Сеть ─────────────────────────────────────────────────────────────
 
-socket.on('connect', () => { me = socket.id; });
+socket.on('connect', () => { tryAutoReturn(); });
 
 socket.on('state', (st) => {
   state = st;
@@ -255,6 +294,39 @@ function join(action) {
   socket.emit(action, action === 'create' ? { name } : { name, code: $('f-code').value.trim() }, (res) => {
     if (res && res.error) { $('auth-err').textContent = res.error; return; }
     rememberName(name);
+    rememberRoom(res && res.code);
+  });
+}
+
+// Код комнаты держим рядом с именем: без него перезагрузка страницы означала бы
+// «найти комнату заново», а найти её нечем — код знали только в наборе.
+function rememberRoom(code) {
+  try {
+    if (code) sessionStorage.setItem(ROOM_KEY, code);
+    else sessionStorage.removeItem(ROOM_KEY);
+  } catch (e) { /* приватный режим */ }
+}
+function savedRoom() {
+  try { return sessionStorage.getItem(ROOM_KEY) || ''; } catch (e) { return ''; }
+}
+
+// Возврат в комнату после перезагрузки. Pid тот же, поэтому сервер опознаёт нас
+// по записи в players и возвращает капитал, историю и место за столом.
+let returning = false;
+function tryAutoReturn() {
+  const code = savedRoom();
+  if (!code || returning) return;
+  returning = true;
+  socket.emit('join', { code, name: $('f-name').value.trim() || savedName() || 'Игрок' }, (res) => {
+    returning = false;
+    if (res && !res.error) return;
+    // Комната рассыпалась, пока нас не было (перезапуск сервера). Код убираем,
+    // иначе каждая перезагрузка снова билась бы в стену, и подставляем его в
+    // поле: войти руками тогда можно одним нажатием.
+    rememberRoom('');
+    $('f-code').value = code;
+    state = null;
+    show('scr-auth');
   });
 }
 
@@ -268,6 +340,9 @@ function savedName() {
   try { return localStorage.getItem(NAME_KEY) || ''; } catch (e) { return ''; }
 }
 $('f-name').value = savedName();
+// Код подставляем заранее: если автовозврат не сработал (комната рассыпалась),
+// войти можно сразу, не набирая его по памяти.
+$('f-code').value = savedRoom();
 
 $('b-create').onclick = () => join('create');
 $('b-join').onclick = () => join('join');
@@ -278,8 +353,11 @@ function leaveRoom() {
   socket.emit('leave');
   // Сервер выводит сокета из комнаты и больше не шлёт ему снимки, поэтому
   // экран переключаем сами: иначе он навсегда замирает на последнем виде.
-  // Имя не стираем — его подставит следующий вход, см. rememberName.
+  // Имя не стираем — его подставит следующий вход, см. rememberName. Код
+  // комнаты стираем обязательно: останься он — следующая перезагрузка попыталась
+  // бы вернуть нас в комнату, из которой мы только что вышли.
   state = null;
+  rememberRoom('');
   $('f-code').value = '';
   $('auth-err').textContent = '';
   show('scr-auth');

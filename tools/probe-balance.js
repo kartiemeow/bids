@@ -21,6 +21,9 @@ const GAMES = 300;
 function play(seed) {
   const g = new Game('LIVE' + seed);
   for (let i = 0; i < N; i++) g.addPlayer('p' + i, 'p' + i);
+  // Старт требует готовности всех — иначе партия просто не начинается, и замер
+  // молча показывает нули вместо чисел.
+  for (const p of g.players) g.setReady(p.id, true);
   g.start();
   let s = seed * 2654435761 % 2147483647;
   const rnd = () => { s = (s * 48271) % 2147483647; return s / 2147483647; };

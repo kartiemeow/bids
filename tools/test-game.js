@@ -27,6 +27,13 @@ function fail(name, extra = '') {
   console.log(`  FAIL ${name}${extra ? ' — ' + extra : ''}`);
 }
 
+// Старт требует, чтобы все в комнате нажали «готов». Тестам, которые проверяют
+// не лобби, нажатие неинтересно — нажимаем за всех. Само правило проверяется в
+// секции [3], где готовность снимается по одному игроку.
+function readyAll(g) {
+  for (const p of g.players) g.setReady(p.id, true);
+}
+
 // ── 1. Полный прогон комнаты ──────────────────────────────────────────
 
 console.log('\n[1] Полный цикл: 3 игрока, 15 раундов');
@@ -56,6 +63,8 @@ let unsold = 0;
 let unsoldLate = 0;
 let earlyCloses = 0;
 
+
+readyAll(game);
 game.start();
 check('игра стартовала сразу с торгов', game.state.phase === PHASES.BID);
 
@@ -201,6 +210,8 @@ console.log('\n[2] Открытый аукцион и границы');
 const g2 = new Game('BLND');
 g2.addPlayer('a', 'Аня');
 g2.addPlayer('b', 'Борис');
+
+readyAll(g2);
 g2.start();
 // Секрет комнаты случаен, поэтому лот может выпасть дороже стартового капитала.
 // Для проверки механики аукциона капитал поднимаем так, чтобы любой лот можно
@@ -278,6 +289,8 @@ console.log('\n[2б] Ставка без минимальной цены');
 const g2b = new Game('ANY');
 g2b.addPlayer('a', 'Аня');
 g2b.addPlayer('b', 'Борис');
+
+readyAll(g2b);
 g2b.start();
 for (const p of g2b.players) p.money = 5000;
 const pileValue = g2b.state.currentPile._value;
@@ -326,6 +339,8 @@ check('в правилах нет ни крыши, ни доли капитал�
   `bidCap=${RULES.bidCap}, maxBidRatio=${RULES.maxBidRatio}`);
 
 // 1500 — выше прежней общей крыши в 800. Раньше такая ставка была отказом.
+
+readyAll(g2c);
 g2c.start();
 check('ставка выше прежней крыши принимается', g2c.raise('rich', 1500).ok);
 const g2cCap = g2c.bidCapFor(g2cRich);
@@ -345,6 +360,8 @@ const g2e = new Game('ALLIN');
 g2e.addPlayer('p', 'Бедняк');
 g2e.addPlayer('q', 'Сосед');
 g2e.state.players.get('p').money = 400;
+
+readyAll(g2e);
 g2e.start();
 const g2eP = g2e.state.players.get('p');
 const g2eCap = g2e.bidCapFor(g2eP);
@@ -392,15 +409,52 @@ check('после перевеса общая сумма не изменилас
   `${tieTotal} -> ${g2d.players.reduce((s, p) => s + p.money, 0)}`);
 g2d.destroy();
 
-// ── 3. Старт невозможен без игроков ───────────────────────────────────
+// ── 3. Лобби: старт только когда все готовы ───────────────────────────
 
 console.log('\n[3] Лобби');
 const g3 = new Game('LBY');
 g3.addPlayer('solo', 'Один');
 check('в одиночку не стартует', g3.start() === false);
+check('и причина названа', g3.startBlock().includes('игрок'), g3.startBlock());
 g3.addPlayer('duo', 'Двое');
+
+// Кнопка «готов» обязана влиять на старт. Раньше canStart смотрел только на
+// число игроков, и игрок нажимал её впустую.
+check('вдвоём без готовности не стартует', g3.start() === false);
+check('и причина — кто не готов', g3.startBlock() === 'не готовы: Один, Двое', g3.startBlock());
+g3.setReady('solo', true);
+check('один готовый не хватает', g3.start() === false);
+check('и причина называет второго', g3.startBlock() === 'не готовы: Двое', g3.startBlock());
+g3.setReady('duo', true);
+check('все готовы — стартует', g3.canStart() === true, g3.startBlock());
 check('вдвоём стартует', g3.start() === true);
+
+// Готовность — только в лобби: в разгаданной партии «не готов» означал бы
+// отмену участия, а партия уже идёт.
+check('в игре готовность не меняется', g3.setReady('solo', false).ok === false);
 g3.destroy();
+
+// Реванш возвращает лобби и сбрасывает готовность: иначе второй круг
+// начинался бы без согласия, а игрок, ушедший перед реваншем, оживал бы и
+// блокировал старт навсегда — нажать «готов» за него было некому.
+const g3r = new Game('LBY2');
+g3r.addPlayer('a', 'Аня');
+g3r.addPlayer('b', 'Борис');
+g3r.addPlayer('c', 'Вера');
+readyAll(g3r);
+g3r.start();
+g3r.removePlayer('c');          // Вера нажала «выйти»
+g3r.finish();
+g3r.resetToLobby();
+check('после реванша лобби', g3r.state.phase === PHASES.LOBBY);
+check('готовность сброшена', g3r.online.every((p) => !p.ready));
+check('ушедший не ожил', !g3r.state.players.get('c').connected);
+check('оставшиеся в комнате', g3r.online.length === 2, String(g3r.online.length));
+check('в реванше без готовности не стартует', g3r.start() === false);
+check('и причина называет двоих', g3r.startBlock() === 'не готовы: Аня, Борис', g3r.startBlock());
+readyAll(g3r);
+check('после готовности реванш стартует', g3r.start() === true);
+g3r.destroy();
 
 // ── 4. Детерминизм кладовки ───────────────────────────────────────────
 
@@ -515,6 +569,8 @@ const secretBefore = g4.secret;
 // небольшой сумме тест то выигрывал, то нет — проверка денег зависела от удачи.
 g4.state.players.get('h').money = 5000;
 g4.state.players.get('h').won.push({ round: 0, value: 500, bid: 100 });
+
+readyAll(g4);
 g4.start();
 // Ставим 80% капитала: сумма лота случайна, а потолок — это весь капитал, и
 // проверка начислений не должна зависеть от того, дорогой лот выпал или нет.
@@ -549,6 +605,10 @@ check('колоды перемешаны заново',
   Object.values(g4.decks).every((d) => d.length > 0)
   && Object.values(g4.decks).flat().length === CATALOG.length);
 check('старый выигрыш очищен', g4.state.players.get('h').won.length === 0);
+// Реванш сбрасывает готовность, поэтому перед стартом её надо нажать заново —
+// иначе второй круг начинался бы сам, без согласия игроков.
+check('после реванша без готовности не стартует', g4.start() === false);
+readyAll(g4);
 check('снова можно стартовать', g4.start() === true);
 check('новая кладовка создана', !!g4.state.currentPile);
 g4.destroy();
@@ -559,6 +619,8 @@ console.log('\n[7] Снимок для сети');
 const g5 = new Game('LEAK');
 g5.addPlayer('x', 'Ксю');
 g5.addPlayer('y', 'Юля');
+
+readyAll(g5);
 g5.start();
 const raw = JSON.stringify(g5.publicState());
 check('в снимке нет secret', !raw.includes(g5.secret));
